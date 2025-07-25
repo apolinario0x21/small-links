@@ -93,7 +93,10 @@ func shortenHandler(c *gin.Context) {
 	urlStore[shortId] = encryptedURL
 	mu.Unlock()
 
-	shortUrl := "http://localhost:8080/" + shortId
+	host := c.Request.Host
+	scheme := "https"
+	shortUrl := scheme + "://" + host + "/" + shortId
+
 	c.JSON(http.StatusOK, gin.H{
 		"original_url": originalUrl,
 		"short_url":    shortUrl,
