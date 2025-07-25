@@ -1,5 +1,5 @@
 # Etapa 1: build da aplicação
-FROM golang:1.23.2 AS builder
+FROM golang:1.22.3 AS builder
 WORKDIR /app
 COPY . .
 RUN go mod download
