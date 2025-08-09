@@ -4,8 +4,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"log"
 	"math/big"
 	"net/http"
@@ -15,28 +15,25 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type URLData struct {
-	OriginalURL string    `json:"original_url"`
-	CreatedAt   time.Time `json:"created_at"`
-	AccessCount int       `json:"access_count"`
+	ID          int       `db:"id"`
+	ShortID     string    `db:"short_id"`
+	OriginalURL string    `db:"original_url"`
+	CreatedAt   time.Time `db:"created_at"`
+	AccessCount int       `db:"access_count"`
 }
 
 var (
-	urlStore    = make(map[string]URLData)
+	db          *sql.DB
 	mu          sync.RWMutex
 	secretKey   []byte
 	lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	dataFile    = "urls.json"
 )
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found, using environment variables directly.")
-	}
 
 	key := os.Getenv("ENCRYPTION_KEY")
 	if key == "" {
@@ -48,42 +45,51 @@ func init() {
 	}
 
 	secretKey = []byte(key)
-	loadData()
+
+	connectDB()
+	migrateDB()
 }
 
-func loadData() {
-	file, err := os.Open(dataFile)
+func connectDB() {
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
+
+	var err error
+	db, err = sql.Open("postgres", connStr)
 	if err != nil {
-		log.Println("No existing data file found, starting fresh.")
-		return
+		log.Fatal("Failed to open a DB connection: ", err)
 	}
 
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&urlStore); err != nil {
-		log.Printf("Error decoding data %v:", err)
-	} else {
-		log.Printf("Loaded %d URLs from data file.", len(urlStore))
+	for i := 0; i < 5; i++ {
+		err = db.Ping()
+		if err == nil {
+			log.Println("Successfully connected to the database!")
+			return
+		}
+		log.Printf("Unsuccessful database connection, retrying in 5 seconds... (%d/5)", i+1)
+		time.Sleep(5 * time.Second)
 	}
+	log.Fatal("Several unsuccessful connection attempts: ", err)
 }
 
-func saveData() {
-	mu.RLock()
-	defer mu.RUnlock()
+func migrateDB() {
+	const createTableSQL = `
+	CREATE TABLE IF NOT EXISTS urls (
+		id SERIAL PRIMARY KEY,
+		short_id VARCHAR(6) UNIQUE NOT NULL,
+		original_url TEXT NOT NULL,
+		created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+		access_count INT NOT NULL DEFAULT 0
+	);`
 
-	file, err := os.Create(dataFile)
+	_, err := db.Exec(createTableSQL)
 	if err != nil {
-		log.Printf("Error creating data file: %v", err)
-		return
+		log.Fatal("Failed to create 'urls' table: ", err)
 	}
 
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(urlStore); err != nil {
-		log.Printf("Error saving data: %v", err)
-	}
+	log.Println("Database migration completed.")
 }
 
 func encrypt(originalUrl string) string {
@@ -150,12 +156,16 @@ func generateShortId() string {
 
 		shortId := string(b)
 
-		mu.RLock()
-		_, exists := urlStore[shortId]
-		mu.RUnlock()
+		var exists bool
+		query := "SELECT EXISTS(SELECT 1 FROM urls WHERE short_id = $1)"
+		err := db.QueryRow(query, shortId).Scan(&exists)
+		if err != nil {
+			log.Printf("Database check error: %v", err)
+			continue
+		}
 
 		if !exists {
-			return string(b)
+			return shortId
 		}
 	}
 }
@@ -200,18 +210,20 @@ func shortenHandler(c *gin.Context) {
 	}
 
 	shortId := generateShortId()
-
 	urlData := URLData{
+		ShortID:     shortId,
 		OriginalURL: encryptedURL,
 		CreatedAt:   time.Now(),
 		AccessCount: 0,
 	}
 
-	mu.Lock()
-	urlStore[shortId] = urlData
-	mu.Unlock()
-
-	go saveData()
+	insertSQL := `INSERT INTO urls (short_id, original_url, created_at, access_count) VALUES ($1, $2, $3, $4)`
+	_, err := db.Exec(insertSQL, urlData.ShortID, urlData.OriginalURL, urlData.CreatedAt, urlData.AccessCount)
+	if err != nil {
+		log.Printf("Failed to insert URL into DB: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+		return
+	}
 
 	scheme := getScheme(c)
 	host := c.Request.Host
@@ -227,18 +239,23 @@ func shortenHandler(c *gin.Context) {
 func redirectHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	mu.Lock()
-	urlData, ok := urlStore[shortId]
-	if ok {
-		urlData.AccessCount++
-		urlStore[shortId] = urlData
+	var urlData URLData
+	row := db.QueryRow(`SELECT short_id, original_url, access_count FROM urls WHERE short_id = $1`, shortId)
+	err := row.Scan(&urlData.ShortID, &urlData.OriginalURL, &urlData.AccessCount)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
+			return
+		}
+		log.Printf("Failed to query DB: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
 	}
 
-	mu.Unlock()
-
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
-		return
+	updateSQL := `UPDATE urls SET access_count = access_count + 1 WHERE short_id = $1`
+	_, err = db.Exec(updateSQL, shortId)
+	if err != nil {
+		log.Printf("Failed to update access count: %v", err)
 	}
 
 	decrypted := decrypt(urlData.OriginalURL)
@@ -247,19 +264,22 @@ func redirectHandler(c *gin.Context) {
 		return
 	}
 
-	go saveData()
 	c.Redirect(http.StatusFound, decrypted)
 }
 
 func statsHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	mu.RLock()
-	urlData, ok := urlStore[shortId]
-	mu.RUnlock()
-
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
+	var urlData URLData
+	row := db.QueryRow(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE short_id = $1`, shortId)
+	err := row.Scan(&urlData.ShortID, &urlData.OriginalURL, &urlData.CreatedAt, &urlData.AccessCount)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
+			return
+		}
+		log.Printf("Failed to query DB: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
@@ -278,9 +298,16 @@ func statsHandler(c *gin.Context) {
 }
 
 func healthHandler(c *gin.Context) {
-	mu.RLock()
-	totalUrls := len(urlStore)
-	mu.RUnlock()
+	var totalUrls int
+	err := db.QueryRow(`SELECT COUNT(*) FROM urls`).Scan(&totalUrls)
+	if err != nil {
+		log.Printf("Failed to query total URLs: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "unhealthy",
+			"error":  "Failed to get total URL count",
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":     "healthy",
