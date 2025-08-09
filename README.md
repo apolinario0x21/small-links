@@ -7,7 +7,8 @@
 [![railway](https://img.shields.io/badge/Deploy-Railway-purple.svg)](https://railway.app/)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Um serviço encurtador de URLs seguro, eficiente e pronto para produção, construído com Go e o framework Gin. Possui criptografia AES, armazenamento persistente, análise de acessos e detecção automática de HTTPS.
+Um serviço de encurtador de URLs seguro e de alta performance, construído com Go e o framework Gin. 
+Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento persistente e rastreamento de acessos.
 
 ## ⚙️ Funcionalidades
 
