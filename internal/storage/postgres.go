@@ -70,8 +70,8 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	insertSQL := `INSERT INTO urls (short_id, original_url, created_at, access_count) VALUES ($1, $2, $3, $4)`
-	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.CreatedAt, data.AccessCount)
+	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count) VALUES ($1, $2, $3, $4, $5)`
+	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount)
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
@@ -79,6 +79,21 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	}
 
 	return err
+}
+
+// FindByURLHash localiza uma URL já encurtada pelo HMAC da URL original.
+// Registros anteriores ao backfill têm url_hash NULL e nunca casam aqui.
+func (p *Postgres) FindByURLHash(ctx context.Context, urlHash string) (URLData, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	var data URLData
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 ORDER BY id LIMIT 1`, urlHash)
+	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.CreatedAt, &data.AccessCount)
+	if errors.Is(err, sql.ErrNoRows) {
+		return URLData{}, ErrNotFound
+	}
+	return data, err
 }
 
 // FindForRedirect busca apenas as colunas necessárias ao redirect

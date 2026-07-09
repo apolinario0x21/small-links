@@ -75,6 +75,12 @@ func expectations(t *testing.T, mock sqlmock.Sqlmock) {
 	}
 }
 
+// expectNoDedup registra a consulta de dedup por url_hash sem resultado.
+func expectNoDedup(mock sqlmock.Sqlmock) {
+	mock.ExpectQuery(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1`).
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}))
+}
+
 // --- GET /shorten ---
 
 func TestShortenMissingURL(t *testing.T) {
@@ -120,6 +126,7 @@ func doJSONPost(router *gin.Engine, path, body string) *httptest.ResponseRecorde
 func TestAPIShortenSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
+	expectNoDedup(mock)
 	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -189,10 +196,60 @@ func TestAPIShortenRejectsSelfReference(t *testing.T) {
 	expectations(t, mock)
 }
 
+func TestAPIShortenDedupReturnsExistingShortID(t *testing.T) {
+	router, mock := setupTest(t)
+
+	createdAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	mock.ExpectQuery(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1`).
+		WithArgs(testCipher.Hash("https://www.destino.com/pagina")).
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
+			AddRow("jaexis", encrypt("https://www.destino.com/pagina"), createdAt, 5))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.destino.com/pagina"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for existing URL; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["existing"] != true {
+		t.Errorf("existing = %v, want true", body["existing"])
+	}
+	if body["short_id"] != "jaexis" {
+		t.Errorf("short_id = %q, want reused %q", body["short_id"], "jaexis")
+	}
+	if body["short_url"] != "http://example.com/jaexis" {
+		t.Errorf("short_url = %q", body["short_url"])
+	}
+	expectations(t, mock)
+}
+
+func TestShortenDedupOnLegacyGET(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1`).
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
+			AddRow("jaexis", encrypt("https://www.example.com"), time.Now(), 1))
+
+	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["existing"] != true {
+		t.Errorf("existing = %v, want true", body["existing"])
+	}
+	if body["short_url"] != "http://example.com/jaexis" {
+		t.Errorf("short_url = %q, want reused short_id", body["short_url"])
+	}
+	expectations(t, mock)
+}
+
 func TestShortenSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectExec(`INSERT INTO urls \(short_id, original_url, created_at, access_count\) VALUES \(\$1, \$2, \$3, \$4\)`).
+	expectNoDedup(mock)
+	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
@@ -217,6 +274,7 @@ func TestShortenSuccess(t *testing.T) {
 func TestShortenInsertFailure(t *testing.T) {
 	router, mock := setupTest(t)
 
+	expectNoDedup(mock)
 	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnError(errTest)
 
@@ -235,6 +293,7 @@ func TestShortenInsertFailure(t *testing.T) {
 func TestShortenRetriesOnShortIDCollision(t *testing.T) {
 	router, mock := setupTest(t)
 
+	expectNoDedup(mock)
 	mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
 	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -249,6 +308,7 @@ func TestShortenRetriesOnShortIDCollision(t *testing.T) {
 func TestShortenFailsAfterExhaustingCollisionRetries(t *testing.T) {
 	router, mock := setupTest(t)
 
+	expectNoDedup(mock)
 	for i := 0; i < 3; i++ {
 		mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
 	}

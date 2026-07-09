@@ -1,9 +1,6 @@
 package crypto
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -50,36 +47,30 @@ func TestEncryptUsesRandomIV(t *testing.T) {
 	}
 }
 
-func encryptLegacyCTR(t *testing.T, key []byte, plainText string) string {
-	t.Helper()
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestHashIsDeterministicAndDistinct(t *testing.T) {
+	c, _ := New(testKey)
 
-	data := []byte(plainText)
-	cipherText := make([]byte, aes.BlockSize+len(data))
-	iv := cipherText[:aes.BlockSize]
-	if _, err := rand.Read(iv); err != nil {
-		t.Fatal(err)
-	}
+	a := c.Hash("https://www.example.com")
+	b := c.Hash("https://www.example.com")
+	other := c.Hash("https://www.example.org")
 
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(cipherText[aes.BlockSize:], data)
-	return hex.EncodeToString(cipherText)
+	if a != b {
+		t.Error("Hash must be deterministic for the same URL")
+	}
+	if a == other {
+		t.Error("Hash must differ for different URLs")
+	}
+	if len(a) != 64 {
+		t.Errorf("Hash length = %d, want 64 hex chars", len(a))
+	}
 }
 
-func TestDecryptFallsBackToLegacyCTR(t *testing.T) {
-	c, _ := New(testKey)
-	original := "https://www.example.com/registro-antigo"
-	legacy := encryptLegacyCTR(t, testKey, original)
+func TestHashDependsOnKey(t *testing.T) {
+	c1, _ := New(testKey)
+	c2, _ := New([]byte("ffffffffffffffffffffffffffffffff"))
 
-	decrypted, err := c.Decrypt(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if decrypted != original {
-		t.Errorf("legacy decrypt = %q, want %q", decrypted, original)
+	if c1.Hash("https://www.example.com") == c2.Hash("https://www.example.com") {
+		t.Error("Hash must depend on the key (HMAC)")
 	}
 }
 
@@ -91,10 +82,8 @@ func TestDecryptTamperedGCMFailsAuthentication(t *testing.T) {
 	raw[len(raw)-1] ^= 0xff
 	tampered := hex.EncodeToString(raw)
 
-	// A autenticação GCM rejeita o dado adulterado; o fallback CTR ainda
-	// roda, mas jamais reproduz o texto original.
-	if decrypted, err := c.Decrypt(tampered); err == nil && decrypted == "https://www.example.com" {
-		t.Error("tampered cipher text must not decrypt to the original plain text")
+	if _, err := c.Decrypt(tampered); err == nil {
+		t.Error("tampered cipher text must fail GCM authentication")
 	}
 }
 
