@@ -5,7 +5,6 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 ## Comandos
 
 - Rodar local: `go run ./cmd/server` (exige `ENCRYPTION_KEY` de 32 chars e `DATABASE_URL`)
-- Backfill GCM/url_hash: `go run ./cmd/migrate-gcm` (idempotente; mesmas env vars)
 - Subir tudo: `docker compose up --build`
 - Testes: `go test ./...`
 - Verificações: `gofmt -l .` e `go vet ./...`
@@ -24,7 +23,6 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 
 ```
 cmd/server/          → bootstrap (config, injeção de dependências, graceful shutdown, slog)
-cmd/migrate-gcm/     → backfill: re-cifra registros CTR legados em GCM e preenche url_hash
 internal/config/     → leitura e validação de env vars
 internal/crypto/     → AES-256-GCM (nonce prefixado) + Hash HMAC-SHA256 p/ dedup
 internal/storage/    → interface Repository + implementação Postgres (context + timeout)
@@ -45,8 +43,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 ## Decisões registradas
 
 - **AES-GCM (item 4)**: cifragem autenticada; o fallback de leitura CTR existiu apenas
-  durante a transição e foi removido após o backfill (`cmd/migrate-gcm`). Ciphertext
-  adulterado agora falha a autenticação com erro.
+  durante a transição e foi removido. Pelo Caminho A (jul/2026), os registros CTR legados
+  são descartados via `TRUNCATE` no deploy final, então o backfill (`cmd/migrate-gcm`) foi
+  removido como código morto. Ciphertext adulterado agora falha a autenticação com erro.
 - **Dedup por HMAC (item 5)**: coluna `url_hash CHAR(64)` nullable com índice não-único
   (migration 002), preenchida no create e pelo backfill. HMAC-SHA256 com a `ENCRYPTION_KEY`
   permite lookup determinístico sem decifrar (o nonce aleatório impede busca pelo ciphertext).
@@ -65,8 +64,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 1. **TRUNCATE no deploy final**: rodar `TRUNCATE TABLE urls;` no banco do Railway antes de
    qualquer teste — os registros CTR legados foram deliberadamente descartados (Caminho A,
    jul/2026). Até lá, links antigos em produção estão quebrados: comportamento conhecido e aceito.
-2. **`cmd/migrate-gcm` é código morto** com essa decisão — remover em commit futuro, junto
-   com seus testes.
+2. ~~**`cmd/migrate-gcm` é código morto** com essa decisão — remover em commit futuro.~~ ✅ removido.
 3. **Commits marcados como "aplicar após operação manual"** devem ficar em PR separado.
 
 ## Backlog priorizado
@@ -75,9 +73,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 2. ~~**Testes de caracterização** + CI~~ ✅ (PR #2)
 3. ~~**Refatoração estrutural** para a arquitetura alvo~~ ✅ (PR #2)
 4. ~~**Segurança**: AES-GCM, POST /api/shorten, validação, rate limiting, Dockerfile~~ ✅ (PR #3)
-5. ~~**Dedup**: url_hash HMAC-SHA256 indexado + backfill~~ ✅
-   - Pré-requisito deste commit: `go run ./cmd/migrate-gcm` já executado em produção
-     (o fallback `decryptLegacyCTR` foi removido).
+5. ~~**Dedup**: url_hash HMAC-SHA256 indexado~~ ✅
+   - Pelo Caminho A (jul/2026), os registros CTR legados são descartados via `TRUNCATE` no
+     deploy final; o fallback `decryptLegacyCTR` e o backfill `cmd/migrate-gcm` foram removidos.
 6. **Features**: alias customizado, expiração/TTL, QR code, tabela de eventos de clique
    (timestamp, referrer, user-agent), endpoint `/metrics` Prometheus.
 7. **Extras**: cache Redis para redirects quentes, frontend em Next.js.
