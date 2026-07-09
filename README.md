@@ -1,6 +1,6 @@
 # Small Links
 
-![Go](https://img.shields.io/badge/Go-1.22.3-blue.svg)
+![Go](https://img.shields.io/badge/Go-1.25-blue.svg)
 ![Framework](https://img.shields.io/badge/Framework-Gin--v1.10.1-blueviolet.svg)
 [![Framework](https://img.shields.io/badge/Gin-v1.10.1-blueviolet.svg)](https://gin-gonic.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -21,7 +21,7 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 
 
 ## 🚀 Tecnologias utilizadas
-- Go 1.22+
+- Go 1.25+
 - Gin Web Framework
 - PostgreSQL (driver lib/pq)
 - Criptografia AES (pacote crypto/aes)
@@ -59,7 +59,8 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 
 | Método | Rota      | Descrição                             |
 |--------|-----------|---------------------------------------|
-| GET    | `/shorten?url={url_original}` | Gera uma URL curta |
+| POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201) |
+| GET    | `/shorten?url={url_original}` | Gera uma URL curta (legado, responde 200) |
 | GET    | `/{short_id}` | Redireciona para a URL original (AES) |
 | GET    | `/stats/{short_id}`  | Obter Estatísticas da URL |
 | GET    | `/health`  | Verificação de Saúde  |
@@ -80,12 +81,18 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 - A chave de criptografia deve ter exatamente 32 caracteres
 - URLs são criptografadas antes do armazenamento para proteger a privacidade do usuário 
 - IDs curtos são gerados usando números aleatórios criptograficamente seguros
+- Criação de URLs limitada a 10 requisições por minuto por IP (HTTP 429 ao exceder)
 
 ## 📊 Exemplos de Uso
 ### Usando cURL
 
 ```bash
 ### Criar uma URL encurtada
+curl -X POST "https://seu-dominio.com/api/shorten" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.google.com"}'
+
+### Criar uma URL encurtada (endpoint legado)
 curl "https://seu-dominio.com/shorten?url=https://www.google.com"
 
 ### Obter estatísticas
@@ -110,7 +117,7 @@ console.log('Contagem de acessos:', statsData.access_count);
 ```
 ## Componentes Principais
 
-- Camada de Criptografia: Criptografia AES-256-CTR para proteção de URLs
+- Camada de Criptografia: Criptografia AES-256-GCM autenticada (com leitura do formato CTR legado)
 - Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
 - Geração de ID: Identificadores de 6 caracteres criptograficamente seguros
 - Monitoramento: Health checks integrados e análise de acessos 

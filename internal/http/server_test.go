@@ -3,9 +3,12 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,7 +47,7 @@ func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher)
+	server := New(storage.NewPostgres(mockDB), testCipher, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return server.Router(), mock
 }
@@ -98,8 +101,90 @@ func TestShortenInvalidURL(t *testing.T) {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "URL must start with http:// or https://" {
-		t.Errorf("error = %q, want %q", body["error"], "URL must start with http:// or https://")
+	if body["error"] != "URL must be a valid http:// or https:// URL" {
+		t.Errorf("error = %q, want %q", body["error"], "URL must be a valid http:// or https:// URL")
+	}
+	expectations(t, mock)
+}
+
+// --- POST /api/shorten ---
+
+func doJSONPost(router *gin.Engine, path, body string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func TestAPIShortenSuccess(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectExec(`INSERT INTO urls`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.destino.com/pagina"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	shortID, _ := body["short_id"].(string)
+	if !regexp.MustCompile(`^[a-zA-Z0-9]{6}$`).MatchString(shortID) {
+		t.Errorf("short_id = %q, want 6 alfanuméricos", shortID)
+	}
+	if body["original_url"] != "https://www.destino.com/pagina" {
+		t.Errorf("original_url = %q", body["original_url"])
+	}
+	if body["short_url"] != "http://example.com/"+shortID {
+		t.Errorf("short_url = %q, want host + short_id", body["short_url"])
+	}
+	if _, ok := body["created_at"]; !ok {
+		t.Error("response missing created_at")
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenInvalidBody(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, body := range []string{``, `{}`, `{"url": ""}`, `nao é json`} {
+		w := doJSONPost(router, "/api/shorten", body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want 400", body, w.Code)
+		}
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenInvalidURL(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, u := range []string{"ftp://x.com", "http://", "somentetexto", "https:///caminho"} {
+		w := doJSONPost(router, "/api/shorten", `{"url": "`+u+`"}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("url %q: status = %d, want 400", u, w.Code)
+		}
+		body := decodeBody(t, w)
+		if body["error"] != "URL must be a valid http:// or https:// URL" {
+			t.Errorf("url %q: error = %q", u, body["error"])
+		}
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenRejectsSelfReference(t *testing.T) {
+	router, mock := setupTest(t)
+
+	// httptest.NewRequest usa example.com como host da requisição.
+	w := doJSONPost(router, "/api/shorten", `{"url": "http://example.com/abc123"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "URL must not point to this service" {
+		t.Errorf("error = %q, want self-reference rejection", body["error"])
 	}
 	expectations(t, mock)
 }
@@ -107,8 +192,6 @@ func TestShortenInvalidURL(t *testing.T) {
 func TestShortenSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM urls WHERE short_id = \$1\)`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`INSERT INTO urls \(short_id, original_url, created_at, access_count\) VALUES \(\$1, \$2, \$3, \$4\)`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -134,8 +217,6 @@ func TestShortenSuccess(t *testing.T) {
 func TestShortenInsertFailure(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT EXISTS`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnError(errTest)
 
@@ -147,6 +228,61 @@ func TestShortenInsertFailure(t *testing.T) {
 	body := decodeBody(t, w)
 	if body["error"] != "Failed to shorten URL" {
 		t.Errorf("error = %q, want %q", body["error"], "Failed to shorten URL")
+	}
+	expectations(t, mock)
+}
+
+func TestShortenRetriesOnShortIDCollision(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 after collision retry; body = %s", w.Code, w.Body.String())
+	}
+	expectations(t, mock)
+}
+
+func TestShortenFailsAfterExhaustingCollisionRetries(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for i := 0; i < 3; i++ {
+		mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
+	}
+
+	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 after 3 collisions", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "Failed to shorten URL" {
+		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
+func TestShortenRateLimit(t *testing.T) {
+	router, mock := setupTest(t)
+
+	// Requisições sem o parâmetro url não tocam o banco, mas contam para o
+	// limite. O burst é 10: as 10 primeiras passam (400), a 11ª leva 429.
+	for i := 0; i < 10; i++ {
+		if w := doRequest(router, http.MethodGet, "/shorten"); w.Code != http.StatusBadRequest {
+			t.Fatalf("request %d: status = %d, want 400", i+1, w.Code)
+		}
+	}
+
+	w := doRequest(router, http.MethodGet, "/shorten")
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 after burst", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "rate limit exceeded, try again later" {
+		t.Errorf("error = %q", body["error"])
 	}
 	expectations(t, mock)
 }

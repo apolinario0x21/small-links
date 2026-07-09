@@ -1,4 +1,8 @@
-// Package crypto encapsula a cifragem de URLs com AES-256-CTR.
+// Package crypto encapsula a cifragem de URLs com AES-256-GCM.
+//
+// Registros gravados antes da migração para GCM usavam AES-CTR sem
+// autenticação; Decrypt tenta GCM primeiro e cai para o formato CTR
+// legado quando a autenticação falha.
 package crypto
 
 import (
@@ -15,7 +19,8 @@ const KeySize = 32
 
 var ErrCipherTextTooShort = errors.New("cipher text is too short")
 
-// Cipher cifra e decifra strings usando AES-CTR com IV aleatório.
+// Cipher cifra com AES-GCM (nonce aleatório prefixado ao ciphertext) e
+// decifra tanto GCM quanto o formato CTR legado.
 type Cipher struct {
 	key []byte
 }
@@ -27,33 +32,65 @@ func New(key []byte) (*Cipher, error) {
 	return &Cipher{key: key}, nil
 }
 
-func (c *Cipher) Encrypt(plainText string) (string, error) {
+func (c *Cipher) gcm() (cipher.AEAD, error) {
 	block, err := aes.NewCipher(c.key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func (c *Cipher) Encrypt(plainText string) (string, error) {
+	gcm, err := c.gcm()
 	if err != nil {
 		return "", err
 	}
 
-	data := []byte(plainText)
-	cipherText := make([]byte, aes.BlockSize+len(data))
-	iv := cipherText[:aes.BlockSize]
-
-	if _, err := rand.Read(iv); err != nil {
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
 
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(cipherText[aes.BlockSize:], data)
-
-	return hex.EncodeToString(cipherText), nil
+	sealed := gcm.Seal(nonce, nonce, []byte(plainText), nil)
+	return hex.EncodeToString(sealed), nil
 }
 
 func (c *Cipher) Decrypt(encrypted string) (string, error) {
-	block, err := aes.NewCipher(c.key)
+	cipherText, err := hex.DecodeString(encrypted)
 	if err != nil {
 		return "", err
 	}
 
-	cipherText, err := hex.DecodeString(encrypted)
+	if plainText, err := c.decryptGCM(cipherText); err == nil {
+		return plainText, nil
+	}
+
+	return c.decryptLegacyCTR(cipherText)
+}
+
+func (c *Cipher) decryptGCM(cipherText []byte) (string, error) {
+	gcm, err := c.gcm()
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(cipherText) < nonceSize {
+		return "", ErrCipherTextTooShort
+	}
+
+	plainText, err := gcm.Open(nil, cipherText[:nonceSize], cipherText[nonceSize:], nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plainText), nil
+}
+
+// decryptLegacyCTR decifra o formato antigo (AES-CTR, IV de 16 bytes
+// prefixado, sem autenticação). Apenas leitura; nada novo é gravado assim.
+func (c *Cipher) decryptLegacyCTR(cipherText []byte) (string, error) {
+	block, err := aes.NewCipher(c.key)
 	if err != nil {
 		return "", err
 	}
@@ -63,10 +100,10 @@ func (c *Cipher) Decrypt(encrypted string) (string, error) {
 	}
 
 	iv := cipherText[:aes.BlockSize]
-	cipherText = cipherText[aes.BlockSize:]
+	data := make([]byte, len(cipherText)-aes.BlockSize)
 
 	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(cipherText, cipherText)
+	stream.XORKeyStream(data, cipherText[aes.BlockSize:])
 
-	return string(cipherText), nil
+	return string(data), nil
 }
