@@ -117,7 +117,7 @@ console.log('Contagem de acessos:', statsData.access_count);
 ```
 ## Componentes Principais
 
-- Camada de Criptografia: Criptografia AES-256-CTR para proteção de URLs
+- Camada de Criptografia: Criptografia AES-256-GCM autenticada (com leitura do formato CTR legado)
 - Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
 - Geração de ID: Identificadores de 6 caracteres criptograficamente seguros
 - Monitoramento: Health checks integrados e análise de acessos 
