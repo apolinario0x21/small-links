@@ -10,6 +10,9 @@ import (
 // ErrNotFound indica que não existe URL com o short_id consultado.
 var ErrNotFound = errors.New("short URL not found")
 
+// ErrDuplicate indica violação da constraint UNIQUE de short_id no insert.
+var ErrDuplicate = errors.New("short_id already exists")
+
 type URLData struct {
 	ID          int
 	ShortID     string
@@ -19,7 +22,6 @@ type URLData struct {
 }
 
 type Repository interface {
-	ShortIDExists(ctx context.Context, shortID string) (bool, error)
 	Insert(ctx context.Context, data URLData) error
 	FindForRedirect(ctx context.Context, shortID string) (URLData, error)
 	FindByShortID(ctx context.Context, shortID string) (URLData, error)

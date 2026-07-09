@@ -2,10 +2,9 @@
 package http
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
-	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -23,10 +22,14 @@ var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01
 type Server struct {
 	repo   storage.Repository
 	cipher *crypto.Cipher
+	logger *slog.Logger
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher) *Server {
-	return &Server{repo: repo, cipher: cipher}
+func New(repo storage.Repository, cipher *crypto.Cipher, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Server{repo: repo, cipher: cipher, logger: logger}
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -60,31 +63,18 @@ func corsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func (s *Server) generateShortId(ctx context.Context) string {
-	for {
-		b := make([]rune, 6)
-		for i := range b {
-			num, err := rand.Int(rand.Reader, big.NewInt(int64(len(lettersRune))))
-			if err != nil {
-				log.Printf("Random number generation error: %v", err)
-				continue
-			}
-
-			b[i] = lettersRune[num.Int64()]
-		}
-
-		shortId := string(b)
-
-		exists, err := s.repo.ShortIDExists(ctx, shortId)
+// generateShortID gera um candidato de 6 caracteres; a unicidade é
+// garantida pela constraint UNIQUE no insert, não por consulta prévia.
+func generateShortID() (string, error) {
+	b := make([]rune, 6)
+	for i := range b {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(lettersRune))))
 		if err != nil {
-			log.Printf("Database check error: %v", err)
-			continue
+			return "", err
 		}
-
-		if !exists {
-			return shortId
-		}
+		b[i] = lettersRune[num.Int64()]
 	}
+	return string(b), nil
 }
 
 func getScheme(c *gin.Context) string {
@@ -166,24 +156,50 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 
 	encryptedURL, err := s.cipher.Encrypt(originalUrl)
 	if err != nil {
-		log.Printf("Encryption error: %v", err)
+		s.logger.Error("failed to encrypt URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt URL"})
 		return
 	}
 
-	shortId := s.generateShortId(c.Request.Context())
-	urlData := storage.URLData{
-		ShortID:     shortId,
-		OriginalURL: encryptedURL,
-		CreatedAt:   time.Now(),
-		AccessCount: 0,
+	// A unicidade do short_id é garantida pela constraint UNIQUE: em caso
+	// de colisão, gera outro candidato, até 3 tentativas.
+	const maxAttempts = 3
+	var urlData storage.URLData
+	inserted := false
+	for attempt := 1; attempt <= maxAttempts && !inserted; attempt++ {
+		shortId, err := generateShortID()
+		if err != nil {
+			s.logger.Error("failed to generate short id", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+			return
+		}
+
+		urlData = storage.URLData{
+			ShortID:     shortId,
+			OriginalURL: encryptedURL,
+			CreatedAt:   time.Now(),
+			AccessCount: 0,
+		}
+
+		switch err := s.repo.Insert(c.Request.Context(), urlData); {
+		case err == nil:
+			inserted = true
+		case errors.Is(err, storage.ErrDuplicate):
+			s.logger.Warn("short id collision, retrying", "short_id", shortId, "attempt", attempt)
+		default:
+			s.logger.Error("failed to insert URL", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+			return
+		}
 	}
 
-	if err := s.repo.Insert(c.Request.Context(), urlData); err != nil {
-		log.Printf("Failed to insert URL into DB: %v", err)
+	if !inserted {
+		s.logger.Error("exhausted short id attempts", "attempts", maxAttempts)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
 		return
 	}
+
+	shortId := urlData.ShortID
 
 	scheme := getScheme(c)
 	host := c.Request.Host
@@ -210,18 +226,18 @@ func (s *Server) redirectHandler(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
 			return
 		}
-		log.Printf("Failed to query DB: %v", err)
+		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
 	if err := s.repo.IncrementAccessCount(c.Request.Context(), shortId); err != nil {
-		log.Printf("Failed to update access count: %v", err)
+		s.logger.Warn("failed to update access count", "error", err)
 	}
 
 	decrypted, err := s.cipher.Decrypt(urlData.OriginalURL)
 	if err != nil {
-		log.Printf("Decryption error: %v", err)
+		s.logger.Error("failed to decrypt URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt URL"})
 		return
 	}
@@ -238,14 +254,14 @@ func (s *Server) statsHandler(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
 			return
 		}
-		log.Printf("Failed to query DB: %v", err)
+		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
 	decrypted, err := s.cipher.Decrypt(urlData.OriginalURL)
 	if err != nil {
-		log.Printf("Decryption error: %v", err)
+		s.logger.Error("failed to decrypt URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt URL"})
 		return
 	}
@@ -261,7 +277,7 @@ func (s *Server) statsHandler(c *gin.Context) {
 func (s *Server) healthHandler(c *gin.Context) {
 	totalUrls, err := s.repo.CountURLs(c.Request.Context())
 	if err != nil {
-		log.Printf("Failed to query total URLs: %v", err)
+		s.logger.Error("failed to query total URLs", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "unhealthy",
 			"error":  "Failed to get total URL count",

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/apolinario0x21/small-links/migrations"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 const queryTimeout = 5 * time.Second
@@ -66,22 +66,18 @@ func Migrate(db *sql.DB) error {
 	return nil
 }
 
-func (p *Postgres) ShortIDExists(ctx context.Context, shortID string) (bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
-	defer cancel()
-
-	var exists bool
-	query := "SELECT EXISTS(SELECT 1 FROM urls WHERE short_id = $1)"
-	err := p.db.QueryRowContext(ctx, query, shortID).Scan(&exists)
-	return exists, err
-}
-
 func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	insertSQL := `INSERT INTO urls (short_id, original_url, created_at, access_count) VALUES ($1, $2, $3, $4)`
 	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.CreatedAt, data.AccessCount)
+
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
+		return ErrDuplicate
+	}
+
 	return err
 }
 

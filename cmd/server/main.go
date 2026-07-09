@@ -54,7 +54,7 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("database migration completed")
 
-	server := httpapi.New(storage.NewPostgres(db), cipher)
+	server := httpapi.New(storage.NewPostgres(db), cipher, logger)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

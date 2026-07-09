@@ -3,6 +3,8 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -45,7 +47,7 @@ func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher)
+	server := New(storage.NewPostgres(mockDB), testCipher, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return server.Router(), mock
 }
@@ -118,8 +120,6 @@ func doJSONPost(router *gin.Engine, path, body string) *httptest.ResponseRecorde
 func TestAPIShortenSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM urls WHERE short_id = \$1\)`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -192,8 +192,6 @@ func TestAPIShortenRejectsSelfReference(t *testing.T) {
 func TestShortenSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM urls WHERE short_id = \$1\)`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`INSERT INTO urls \(short_id, original_url, created_at, access_count\) VALUES \(\$1, \$2, \$3, \$4\)`).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -219,8 +217,6 @@ func TestShortenSuccess(t *testing.T) {
 func TestShortenInsertFailure(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT EXISTS`).
-		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 	mock.ExpectExec(`INSERT INTO urls`).
 		WillReturnError(errTest)
 
@@ -232,6 +228,39 @@ func TestShortenInsertFailure(t *testing.T) {
 	body := decodeBody(t, w)
 	if body["error"] != "Failed to shorten URL" {
 		t.Errorf("error = %q, want %q", body["error"], "Failed to shorten URL")
+	}
+	expectations(t, mock)
+}
+
+func TestShortenRetriesOnShortIDCollision(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 after collision retry; body = %s", w.Code, w.Body.String())
+	}
+	expectations(t, mock)
+}
+
+func TestShortenFailsAfterExhaustingCollisionRetries(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for i := 0; i < 3; i++ {
+		mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
+	}
+
+	w := doRequest(router, http.MethodGet, "/shorten?url=https://www.example.com")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 after 3 collisions", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "Failed to shorten URL" {
+		t.Errorf("error = %q", body["error"])
 	}
 	expectations(t, mock)
 }
