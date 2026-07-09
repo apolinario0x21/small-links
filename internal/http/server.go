@@ -154,6 +154,27 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		return
 	}
 
+	// Dedup: se a URL já foi encurtada, reaproveita o short_id existente.
+	urlHash := s.cipher.Hash(originalUrl)
+	if existing, err := s.repo.FindByURLHash(c.Request.Context(), urlHash); err == nil {
+		scheme := getScheme(c)
+		response := gin.H{
+			"original_url": originalUrl,
+			"short_url":    scheme + "://" + c.Request.Host + "/" + existing.ShortID,
+			"created_at":   existing.CreatedAt,
+			"existing":     true,
+		}
+		if includeShortID {
+			response["short_id"] = existing.ShortID
+		}
+		c.JSON(http.StatusOK, response)
+		return
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		s.logger.Error("failed to look up URL hash", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+		return
+	}
+
 	encryptedURL, err := s.cipher.Encrypt(originalUrl)
 	if err != nil {
 		s.logger.Error("failed to encrypt URL", "error", err)
@@ -177,6 +198,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		urlData = storage.URLData{
 			ShortID:     shortId,
 			OriginalURL: encryptedURL,
+			URLHash:     urlHash,
 			CreatedAt:   time.Now(),
 			AccessCount: 0,
 		}

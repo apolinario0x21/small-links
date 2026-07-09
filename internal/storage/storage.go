@@ -17,12 +17,14 @@ type URLData struct {
 	ID          int
 	ShortID     string
 	OriginalURL string
+	URLHash     string
 	CreatedAt   time.Time
 	AccessCount int
 }
 
 type Repository interface {
 	Insert(ctx context.Context, data URLData) error
+	FindByURLHash(ctx context.Context, urlHash string) (URLData, error)
 	FindForRedirect(ctx context.Context, shortID string) (URLData, error)
 	FindByShortID(ctx context.Context, shortID string) (URLData, error)
 	IncrementAccessCount(ctx context.Context, shortID string) error
