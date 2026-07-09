@@ -36,3 +36,6 @@ go.work.sum
 
 # Compiled binary
 go-gin-url
+
+# Binário compilado
+/small-links

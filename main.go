@@ -1,11 +1,8 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"log"
 	"math/big"
 	"net/http"
@@ -13,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 )
@@ -91,52 +89,35 @@ func migrateDB() {
 }
 
 func encrypt(originalUrl string) string {
-	block, err := aes.NewCipher(secretKey)
+	c, err := crypto.New(secretKey)
 	if err != nil {
 		log.Printf("Encryption error: %v", err)
 		return ""
 	}
 
-	plainText := []byte(originalUrl)
-	cipherText := make([]byte, aes.BlockSize+len(plainText))
-	iv := cipherText[:aes.BlockSize]
-
-	if _, err := rand.Read(iv); err != nil {
-		log.Printf("IV generation error: %v", err)
+	encrypted, err := c.Encrypt(originalUrl)
+	if err != nil {
+		log.Printf("Encryption error: %v", err)
 		return ""
 	}
 
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(cipherText[aes.BlockSize:], plainText)
-
-	return hex.EncodeToString(cipherText)
+	return encrypted
 }
 
 func decrypt(encryptedUrl string) string {
-	block, err := aes.NewCipher(secretKey)
+	c, err := crypto.New(secretKey)
 	if err != nil {
 		log.Printf("Decryption error: %v", err)
 		return ""
 	}
 
-	cipherText, err := hex.DecodeString(encryptedUrl)
+	decrypted, err := c.Decrypt(encryptedUrl)
 	if err != nil {
-		log.Printf("Hex decode error: %v", err)
+		log.Printf("Decryption error: %v", err)
 		return ""
 	}
 
-	if len(cipherText) < aes.BlockSize {
-		log.Printf("Cipher text is too short")
-		return ""
-	}
-
-	iv := cipherText[:aes.BlockSize]
-	cipherText = cipherText[aes.BlockSize:]
-
-	stream := cipher.NewCTR(block, iv)
-	stream.XORKeyStream(cipherText, cipherText)
-
-	return string(cipherText)
+	return decrypted
 }
 
 func generateShortId() string {
