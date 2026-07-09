@@ -24,9 +24,11 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 ```
 cmd/server/          → bootstrap (config, injeção de dependências, graceful shutdown, slog)
 internal/config/     → leitura e validação de env vars
-internal/crypto/     → AES-256-GCM (nonce prefixado) + Hash HMAC-SHA256 p/ dedup
+internal/crypto/     → AES-256-GCM (nonce prefixado) + Hash HMAC-SHA256 p/ dedup e ip_hash
 internal/storage/    → interface Repository + implementação Postgres (context + timeout)
-internal/http/       → handlers via struct, middleware CORS, rate limiting por IP, rotas
+internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker)
+internal/metrics/    → coletores Prometheus (counters + histograma de latência)
+internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
 migrations/          → SQL versionado, aplicado via go:embed na inicialização
 ```
 
@@ -56,6 +58,16 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `SetTrustedProxies` restrito a faixas privadas para `ClientIP()` funcionar atrás do proxy
   do Railway sem spoofing.
 - **GET /shorten** mantido por compatibilidade (200), delegando à mesma lógica do POST.
+- **Analytics de clique (item 6)**: tabela `click_events` (migration 003) sem FK para `urls` —
+  o insert é assíncrono e não pode travar o redirect. `internal/analytics.Recorder` usa canal
+  buffered (cap 1000) + worker; buffer cheio descarta o evento com log warn. O `redirectHandler`
+  publica o evento após o 302. Flush no graceful shutdown (`Recorder.Close()` antes do `db.Close()`).
+- **LGPD**: o IP do acesso é gravado apenas como HMAC-SHA256 (`ip_hash`), nunca em claro.
+- **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias) e
+  `top_referrers` (top 5), mantendo os campos antigos. Fatias vazias serializam como `[]`.
+- **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
+  `smalllinks_shortens_total`, `smalllinks_rate_limited_total` e histograma de latência por
+  método/rota/status. Coletores no registry default (`internal/metrics`).
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 
@@ -76,6 +88,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 5. ~~**Dedup**: url_hash HMAC-SHA256 indexado~~ ✅
    - Pelo Caminho A (jul/2026), os registros CTR legados são descartados via `TRUNCATE` no
      deploy final; o fallback `decryptLegacyCTR` e o backfill `cmd/migrate-gcm` foram removidos.
-6. **Features**: alias customizado, expiração/TTL, QR code, tabela de eventos de clique
-   (timestamp, referrer, user-agent), endpoint `/metrics` Prometheus.
+6. **Features** (em andamento):
+   - ~~tabela de eventos de clique (timestamp, referrer, user-agent) + registro assíncrono~~ ✅
+   - ~~stats expandido (total, cliques/dia, top referrers)~~ ✅
+   - ~~endpoint `/metrics` Prometheus~~ ✅
+   - Pendente: alias customizado, expiração/TTL, QR code.
 7. **Extras**: cache Redis para redirects quentes, frontend em Next.js.
