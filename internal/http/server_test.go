@@ -271,6 +271,45 @@ func TestAPIShortenAliasCollision(t *testing.T) {
 	expectations(t, mock)
 }
 
+// Alias com mais de 6 caracteres (o antigo limite de short_id): deve ser
+// aceito agora que a coluna é VARCHAR(30).
+func TestAPIShortenLongAliasSucceeds(t *testing.T) {
+	router, mock := setupTest(t)
+
+	const alias = "meu-alias-bem-descritivo-123" // 28 chars, > 6
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "custom_alias": "`+alias+`"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["short_id"] != alias {
+		t.Errorf("short_id = %q, want %q", body["short_id"], alias)
+	}
+	expectations(t, mock)
+}
+
+// Defesa em profundidade: se o insert falhar por truncamento (validação e
+// schema divergentes), o cliente recebe 400, não 500 genérico.
+func TestAPIShortenAliasTooLongForColumn(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrValueTooLong)
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "custom_alias": "alias-que-nao-cabe"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "custom_alias is too long" {
+		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
 func TestAPIShortenDedupReturnsExistingShortID(t *testing.T) {
 	router, mock := setupTest(t)
 

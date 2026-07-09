@@ -79,8 +79,13 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt)
 
 	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
-		return ErrDuplicate
+	if errors.As(err, &pqErr) {
+		switch pqErr.Code.Name() {
+		case "unique_violation":
+			return ErrDuplicate
+		case "string_data_right_truncation":
+			return ErrValueTooLong
+		}
 	}
 
 	return err
