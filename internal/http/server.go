@@ -35,6 +35,16 @@ func New(repo storage.Repository, cipher *crypto.Cipher, logger *slog.Logger) *S
 func (s *Server) Router() *gin.Engine {
 	router := gin.Default()
 
+	// Atrás do proxy do Railway as requisições chegam da rede interna;
+	// confiar apenas em faixas privadas permite que ClientIP() leia o
+	// X-Forwarded-For do proxy sem aceitar spoofing de clientes externos.
+	if err := router.SetTrustedProxies([]string{
+		"127.0.0.1", "::1",
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fd00::/8",
+	}); err != nil {
+		s.logger.Error("failed to set trusted proxies", "error", err)
+	}
+
 	router.Use(corsMiddleware())
 
 	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
