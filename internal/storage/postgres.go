@@ -70,8 +70,13 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count) VALUES ($1, $2, $3, $4, $5)`
-	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount)
+	var expiresAt interface{}
+	if data.ExpiresAt != nil {
+		expiresAt = *data.ExpiresAt
+	}
+
+	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt)
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
@@ -103,10 +108,14 @@ func (p *Postgres) FindForRedirect(ctx context.Context, shortID string) (URLData
 	defer cancel()
 
 	var data URLData
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count FROM urls WHERE short_id = $1`, shortID)
-	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount)
+	var expiresAt sql.NullTime
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = $1`, shortID)
+	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
+	}
+	if expiresAt.Valid {
+		data.ExpiresAt = &expiresAt.Time
 	}
 	return data, err
 }

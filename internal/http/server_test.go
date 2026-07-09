@@ -445,10 +445,10 @@ func TestRedirectSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
 	encrypted := encrypt("https://www.example.com/destino")
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
 		WithArgs("abc123").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count"}).
-			AddRow("abc123", encrypted, 7))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}).
+			AddRow("abc123", encrypted, 7, nil))
 	mock.ExpectExec(`UPDATE urls SET access_count = access_count \+ 1 WHERE short_id = \$1`).
 		WithArgs("abc123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -467,9 +467,9 @@ func TestRedirectSuccess(t *testing.T) {
 func TestRedirectNotFound(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
 		WithArgs("naoexi").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count"}))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}))
 
 	w := doRequest(router, http.MethodGet, "/naoexi")
 
@@ -483,15 +483,92 @@ func TestRedirectNotFound(t *testing.T) {
 	expectations(t, mock)
 }
 
+func TestRedirectExpiredReturnsGone(t *testing.T) {
+	router, mock := setupTest(t)
+
+	encrypted := encrypt("https://www.example.com")
+	past := time.Now().Add(-1 * time.Hour)
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
+		WithArgs("expira").
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}).
+			AddRow("expira", encrypted, 3, past))
+
+	w := doRequest(router, http.MethodGet, "/expira")
+
+	if w.Code != http.StatusGone {
+		t.Fatalf("status = %d, want 410; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "Short URL has expired" {
+		t.Errorf("error = %q", body["error"])
+	}
+	// Expirado não deve incrementar access_count (nenhum UPDATE esperado).
+	expectations(t, mock)
+}
+
+func TestRedirectNotYetExpired(t *testing.T) {
+	router, mock := setupTest(t)
+
+	encrypted := encrypt("https://www.example.com/futuro")
+	future := time.Now().Add(24 * time.Hour)
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
+		WithArgs("valido").
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}).
+			AddRow("valido", encrypted, 0, future))
+	mock.ExpectExec(`UPDATE urls SET access_count`).
+		WithArgs("valido").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	w := doRequest(router, http.MethodGet, "/valido")
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "https://www.example.com/futuro" {
+		t.Errorf("Location = %q", loc)
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenWithExpiration(t *testing.T) {
+	router, mock := setupTest(t)
+
+	expectNoDedup(mock)
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "expires_in_days": 7}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if _, ok := body["expires_at"]; !ok {
+		t.Error("resposta deveria conter expires_at")
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenInvalidExpiration(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, v := range []string{"0", "-5"} {
+		w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "expires_in_days": `+v+`}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expires_in_days=%s: status = %d, want 400", v, w.Code)
+		}
+	}
+	expectations(t, mock) // nenhuma query esperada
+}
+
 // Caracteriza: falha ao incrementar access_count NÃO impede o redirect.
 func TestRedirectUpdateFailureStillRedirects(t *testing.T) {
 	router, mock := setupTest(t)
 
 	encrypted := encrypt("https://www.example.com")
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count FROM urls`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls`).
 		WithArgs("abc123").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count"}).
-			AddRow("abc123", encrypted, 0))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}).
+			AddRow("abc123", encrypted, 0, nil))
 	mock.ExpectExec(`UPDATE urls SET access_count`).
 		WithArgs("abc123").
 		WillReturnError(errTest)

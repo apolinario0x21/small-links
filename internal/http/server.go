@@ -175,8 +175,9 @@ var reservedAliases = map[string]bool{
 }
 
 type shortenRequest struct {
-	URL         string `json:"url"`
-	CustomAlias string `json:"custom_alias"`
+	URL           string `json:"url"`
+	CustomAlias   string `json:"custom_alias"`
+	ExpiresInDays *int   `json:"expires_in_days"`
 }
 
 // shortenHandler mantém o contrato legado: GET /shorten?url=... com 200.
@@ -188,7 +189,7 @@ func (s *Server) shortenHandler(c *gin.Context) {
 		return
 	}
 
-	s.createShortURL(c, originalUrl, "", http.StatusOK, false)
+	s.createShortURL(c, originalUrl, "", nil, http.StatusOK, false)
 }
 
 // apiShortenHandler é a variante nova: POST /api/shorten com body JSON e 201.
@@ -199,10 +200,20 @@ func (s *Server) apiShortenHandler(c *gin.Context) {
 		return
 	}
 
-	s.createShortURL(c, req.URL, req.CustomAlias, http.StatusCreated, true)
+	var expiresAt *time.Time
+	if req.ExpiresInDays != nil {
+		if *req.ExpiresInDays <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_in_days must be a positive integer"})
+			return
+		}
+		t := time.Now().Add(time.Duration(*req.ExpiresInDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
+
+	s.createShortURL(c, req.URL, req.CustomAlias, expiresAt, http.StatusCreated, true)
 }
 
-func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, successStatus int, includeShortID bool) {
+func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expiresAt *time.Time, successStatus int, includeShortID bool) {
 	if err := validateURL(originalUrl, c.Request.Host); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -261,13 +272,16 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, succe
 		if includeShortID {
 			response["short_id"] = shortId
 		}
+		if expiresAt != nil {
+			response["expires_at"] = *expiresAt
+		}
 		metrics.ShortensTotal.Inc()
 		c.JSON(successStatus, response)
 	}
 
 	// Alias fixo: uma única tentativa; colisão vira 409 Conflict.
 	if alias != "" {
-		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now()}
+		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(alias, urlData.CreatedAt)
@@ -291,7 +305,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, succe
 			return
 		}
 
-		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now()}
+		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(shortId, urlData.CreatedAt)
@@ -320,6 +334,11 @@ func (s *Server) redirectHandler(c *gin.Context) {
 		}
 		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	if urlData.ExpiresAt != nil && time.Now().After(*urlData.ExpiresAt) {
+		c.JSON(http.StatusGone, gin.H{"error": "Short URL has expired"})
 		return
 	}
 
