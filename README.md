@@ -47,7 +47,7 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
    ```
 4. Rode a aplicação
    ```
-   go run main.go
+   go run ./cmd/server
    ```
 
 Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:

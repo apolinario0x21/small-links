@@ -1,8 +1,9 @@
-module go-gin-url
+module github.com/apolinario0x21/small-links
 
 go 1.22.3
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gin-gonic/gin v1.10.1
 	github.com/lib/pq v1.10.9
 )
