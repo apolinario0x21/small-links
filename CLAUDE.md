@@ -44,10 +44,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 
 ## Decisões registradas
 
-- **AES-GCM com fallback CTR (item 4)**: `Decrypt` tenta GCM e cai para o CTR legado se a
-  autenticação falhar. Enquanto o fallback existir, ciphertext adulterado degrada para lixo CTR
-  em vez de erro. Após rodar `cmd/migrate-gcm` em produção, remover `decryptLegacyCTR`
-  (commit dedicado, aplicar só depois do backfill).
+- **AES-GCM (item 4)**: cifragem autenticada; o fallback de leitura CTR existiu apenas
+  durante a transição e foi removido após o backfill (`cmd/migrate-gcm`). Ciphertext
+  adulterado agora falha a autenticação com erro.
 - **Dedup por HMAC (item 5)**: coluna `url_hash CHAR(64)` nullable com índice não-único
   (migration 002), preenchida no create e pelo backfill. HMAC-SHA256 com a `ENCRYPTION_KEY`
   permite lookup determinístico sem decifrar (o nonce aleatório impede busca pelo ciphertext).
@@ -68,8 +67,8 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 3. ~~**Refatoração estrutural** para a arquitetura alvo~~ ✅ (PR #2)
 4. ~~**Segurança**: AES-GCM, POST /api/shorten, validação, rate limiting, Dockerfile~~ ✅ (PR #3)
 5. ~~**Dedup**: url_hash HMAC-SHA256 indexado + backfill~~ ✅
-   - Pendência operacional: rodar `go run ./cmd/migrate-gcm` em produção e só então aplicar
-     o commit que remove `decryptLegacyCTR`.
+   - Pré-requisito deste commit: `go run ./cmd/migrate-gcm` já executado em produção
+     (o fallback `decryptLegacyCTR` foi removido).
 6. **Features**: alias customizado, expiração/TTL, QR code, tabela de eventos de clique
    (timestamp, referrer, user-agent), endpoint `/metrics` Prometheus.
 7. **Extras**: cache Redis para redirects quentes, frontend em Next.js.

@@ -1,5 +1,9 @@
 // Comando de backfill: percorre todas as linhas com url_hash NULL,
-// decifra a URL (GCM ou CTR legado), preenche url_hash e re-cifra em GCM.
+// decifra a URL, preenche url_hash e re-cifra em GCM.
+//
+// Nota: com a remoção de decryptLegacyCTR, este comando só decifra GCM.
+// O backfill de registros CTR legados precisa ter rodado ANTES do commit
+// que removeu o fallback.
 //
 // Idempotente: linhas já processadas têm url_hash preenchido e são
 // ignoradas em execuções seguintes. Requer ENCRYPTION_KEY e DATABASE_URL.
