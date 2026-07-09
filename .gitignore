@@ -39,3 +39,4 @@ go-gin-url
 
 # Binário compilado
 /small-links
+/server
