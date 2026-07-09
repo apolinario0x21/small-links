@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -435,6 +436,46 @@ func TestMetricsEndpoint(t *testing.T) {
 		if !strings.Contains(w.Body.String(), name) {
 			t.Errorf("/metrics não expõe %q", name)
 		}
+	}
+	expectations(t, mock)
+}
+
+// --- GET /qr/:shortId ---
+
+func TestQRCodeSuccess(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
+		WithArgs("abc123").
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}).
+			AddRow("abc123", encrypt("https://www.example.com"), 0, nil))
+
+	w := doRequest(router, http.MethodGet, "/qr/abc123")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+	// PNG começa com a assinatura \x89PNG.
+	if !bytes.HasPrefix(w.Body.Bytes(), []byte("\x89PNG")) {
+		t.Error("corpo não começa com a assinatura PNG")
+	}
+	expectations(t, mock)
+}
+
+func TestQRCodeNotFound(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = \$1`).
+		WithArgs("naoexi").
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at"}))
+
+	w := doRequest(router, http.MethodGet, "/qr/naoexi")
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 	expectations(t, mock)
 }

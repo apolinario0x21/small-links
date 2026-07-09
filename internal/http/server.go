@@ -18,6 +18,7 @@ import (
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/skip2/go-qrcode"
 )
 
 var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
@@ -65,6 +66,7 @@ func (s *Server) Router() *gin.Engine {
 	router.GET("/shorten", createLimiter, s.shortenHandler)
 	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
+	router.GET("/qr/:shortId", s.qrHandler)
 	router.GET("/:shortId", s.redirectHandler)
 
 	return router
@@ -172,6 +174,7 @@ var reservedAliases = map[string]bool{
 	"stats":   true,
 	"api":     true,
 	"metrics": true,
+	"qr":      true,
 }
 
 type shortenRequest struct {
@@ -407,6 +410,32 @@ func (s *Server) statsHandler(c *gin.Context) {
 		"clicks_per_day": clickStats.ClicksPerDay,
 		"top_referrers":  clickStats.TopReferrers,
 	})
+}
+
+// qrHandler devolve um PNG com o QR code do short_url. Confirma que o
+// short link existe antes de gerar.
+func (s *Server) qrHandler(c *gin.Context) {
+	shortId := c.Param("shortId")
+
+	if _, err := s.repo.FindForRedirect(c.Request.Context(), shortId); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
+			return
+		}
+		s.logger.Error("failed to query DB", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	shortUrl := getScheme(c) + "://" + c.Request.Host + "/" + shortId
+	png, err := qrcode.Encode(shortUrl, qrcode.Medium, 256)
+	if err != nil {
+		s.logger.Error("failed to generate QR code", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate QR code"})
+		return
+	}
+
+	c.Data(http.StatusOK, "image/png", png)
 }
 
 func (s *Server) healthHandler(c *gin.Context) {
