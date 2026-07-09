@@ -353,6 +353,28 @@ func TestShortenRateLimit(t *testing.T) {
 	expectations(t, mock)
 }
 
+// --- GET /metrics ---
+
+func TestMetricsEndpoint(t *testing.T) {
+	router, mock := setupTest(t)
+
+	w := doRequest(router, http.MethodGet, "/metrics")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	for _, name := range []string{
+		"smalllinks_redirects_total",
+		"smalllinks_shortens_total",
+		"smalllinks_rate_limited_total",
+	} {
+		if !strings.Contains(w.Body.String(), name) {
+			t.Errorf("/metrics não expõe %q", name)
+		}
+	}
+	expectations(t, mock)
+}
+
 // --- GET /:shortId ---
 
 func TestRedirectSuccess(t *testing.T) {

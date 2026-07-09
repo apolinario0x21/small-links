@@ -8,12 +8,15 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/apolinario0x21/small-links/internal/crypto"
+	"github.com/apolinario0x21/small-links/internal/metrics"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
@@ -52,17 +55,35 @@ func (s *Server) Router() *gin.Engine {
 		s.logger.Error("failed to set trusted proxies", "error", err)
 	}
 
-	router.Use(corsMiddleware())
+	router.Use(metricsMiddleware(), corsMiddleware())
 
 	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
 
 	router.GET("/health", s.healthHandler)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.GET("/shorten", createLimiter, s.shortenHandler)
 	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
 	router.GET("/:shortId", s.redirectHandler)
 
 	return router
+}
+
+// metricsMiddleware observa a latência de cada requisição rotulada por
+// método, rota (padrão registrado, não o path bruto) e status.
+func metricsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+
+		route := c.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		metrics.RequestDuration.WithLabelValues(
+			c.Request.Method, route, strconv.Itoa(c.Writer.Status()),
+		).Observe(time.Since(start).Seconds())
+	}
 }
 
 func corsMiddleware() gin.HandlerFunc {
@@ -184,6 +205,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		if includeShortID {
 			response["short_id"] = existing.ShortID
 		}
+		metrics.ShortensTotal.Inc()
 		c.JSON(http.StatusOK, response)
 		return
 	} else if !errors.Is(err, storage.ErrNotFound) {
@@ -253,6 +275,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		response["short_id"] = shortId
 	}
 
+	metrics.ShortensTotal.Inc()
 	c.JSON(successStatus, response)
 }
 
@@ -282,6 +305,7 @@ func (s *Server) redirectHandler(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, decrypted)
+	metrics.RedirectsTotal.Inc()
 
 	// Registra o clique após responder o 302; o Record é não-bloqueante e
 	// o IP é guardado apenas como HMAC (nunca em claro — ver nota LGPD).
