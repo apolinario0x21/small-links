@@ -68,6 +68,15 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
   `smalllinks_shortens_total`, `smalllinks_rate_limited_total` e histograma de latência por
   método/rota/status. Coletores no registry default (`internal/metrics`).
+- **Alias customizado (item 6)**: `custom_alias` opcional no POST, validado por
+  `^[a-zA-Z0-9_-]{3,30}$`; colisão com `short_id` existente ou rota reservada (`health`,
+  `shorten`, `stats`, `api`, `metrics`, `qr`) devolve 409. Alias explícito ignora o dedup e
+  não usa o retry de 3 tentativas (o alias é fixo).
+- **Expiração/TTL (item 6)**: `expires_in_days` (>0) no POST; migration 004 adiciona
+  `urls.expires_at TIMESTAMPTZ` nullable. Redirect de link expirado responde 410 Gone (antes
+  de incrementar `access_count`). Sem `expires_at`, o link é permanente.
+- **QR code (item 6)**: `GET /qr/:shortId` gera PNG (`image/png`) do short_url via
+  `skip2/go-qrcode`, após confirmar que o short link existe (404 caso contrário).
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 
@@ -88,9 +97,6 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 5. ~~**Dedup**: url_hash HMAC-SHA256 indexado~~ ✅
    - Pelo Caminho A (jul/2026), os registros CTR legados são descartados via `TRUNCATE` no
      deploy final; o fallback `decryptLegacyCTR` e o backfill `cmd/migrate-gcm` foram removidos.
-6. **Features** (em andamento):
-   - ~~tabela de eventos de clique (timestamp, referrer, user-agent) + registro assíncrono~~ ✅
-   - ~~stats expandido (total, cliques/dia, top referrers)~~ ✅
-   - ~~endpoint `/metrics` Prometheus~~ ✅
-   - Pendente: alias customizado, expiração/TTL, QR code.
+6. ~~**Features**: eventos de clique + registro assíncrono, stats expandido, `/metrics`
+   Prometheus, alias customizado, expiração/TTL, QR code~~ ✅
 7. **Extras**: cache Redis para redirects quentes, frontend em Next.js.
