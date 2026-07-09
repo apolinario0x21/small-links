@@ -20,6 +20,8 @@ type URLData struct {
 	URLHash     string
 	CreatedAt   time.Time
 	AccessCount int
+	// ExpiresAt nil = link permanente; caso contrário, expira na data.
+	ExpiresAt *time.Time
 }
 
 // ClickEvent é um evento de acesso a um short link, gravado de forma

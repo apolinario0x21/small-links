@@ -25,6 +25,7 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 - Gin Web Framework
 - PostgreSQL (driver lib/pq)
 - Criptografia AES (pacote crypto/aes)
+- Métricas Prometheus (client_golang) e QR code (skip2/go-qrcode)
 - Docker e Docker Compose
 - Railway para deploy (opcional)
 
@@ -59,12 +60,21 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 
 | Método | Rota      | Descrição                             |
 |--------|-----------|---------------------------------------|
-| POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201; se a URL já foi encurtada, responde 200 com `"existing": true` e o `short_id` existente) |
+| POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201; se a URL já foi encurtada, responde 200 com `"existing": true` e o `short_id` existente). Campos opcionais: `custom_alias` e `expires_in_days` |
 | GET    | `/shorten?url={url_original}` | Gera uma URL curta (legado, responde 200) |
-| GET    | `/{short_id}` | Redireciona para a URL original (AES) |
+| GET    | `/{short_id}` | Redireciona para a URL original (302; 410 Gone se expirado) |
 | GET    | `/stats/{short_id}`  | Estatísticas da URL: `access_count`, `total_clicks`, `clicks_per_day` (últimos 30 dias) e `top_referrers` (top 5) |
+| GET    | `/qr/{short_id}`  | QR code do short link em PNG (`image/png`) |
 | GET    | `/health`  | Verificação de Saúde  |
 | GET    | `/metrics`  | Métricas Prometheus (counters de redirects/shortens/rate-limited e histograma de latência) |
+
+### Campos opcionais do `POST /api/shorten`
+
+- `custom_alias` — alias customizado (`^[a-zA-Z0-9_-]{3,30}$`). Colisão com um `short_id`
+  existente ou com uma rota reservada (`health`, `shorten`, `stats`, `api`, `metrics`, `qr`)
+  responde **409 Conflict**. Ausente, o `short_id` é gerado aleatoriamente.
+- `expires_in_days` — inteiro positivo; o link expira após N dias e o redirect passa a
+  responder **410 Gone**. Ausente, o link é permanente.
 
 
 ## 🔧 Configuração
@@ -100,11 +110,19 @@ curl -X POST "https://seu-dominio.com/api/shorten" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://www.google.com"}'
 
+### Criar com alias customizado e expiração em 30 dias
+curl -X POST "https://seu-dominio.com/api/shorten" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.google.com", "custom_alias": "google", "expires_in_days": 30}'
+
 ### Criar uma URL encurtada (endpoint legado)
 curl "https://seu-dominio.com/shorten?url=https://www.google.com"
 
 ### Obter estatísticas
 curl "https://seu-dominio.com/stats/aB3xY2"
+
+### Baixar o QR code (PNG)
+curl "https://seu-dominio.com/qr/aB3xY2" --output qr.png
 
 ### Verificação de saúde
 curl "https://seu-dominio.com/health"
@@ -127,7 +145,9 @@ console.log('Contagem de acessos:', statsData.access_count);
 
 - Camada de Criptografia: Criptografia AES-256-GCM autenticada
 - Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
-- Geração de ID: Identificadores de 6 caracteres criptograficamente seguros
+- Geração de ID: Identificadores de 6 caracteres criptograficamente seguros, ou alias customizado
+- Expiração: TTL opcional por link (`expires_in_days`); links expirados respondem 410 Gone
+- QR code: PNG do short link em `/qr/{short_id}`
 - Analytics: Eventos de clique gravados de forma assíncrona (buffer + worker), sem travar o redirect
 - Monitoramento: Health checks, estatísticas de acesso e métricas Prometheus em `/metrics`
 

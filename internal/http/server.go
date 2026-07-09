@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/skip2/go-qrcode"
 )
 
 var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
@@ -64,6 +66,7 @@ func (s *Server) Router() *gin.Engine {
 	router.GET("/shorten", createLimiter, s.shortenHandler)
 	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
+	router.GET("/qr/:shortId", s.qrHandler)
 	router.GET("/:shortId", s.redirectHandler)
 
 	return router
@@ -159,8 +162,25 @@ func validateURL(rawURL, requestHost string) error {
 	return nil
 }
 
+// aliasRegex valida o alias customizado: 3-30 chars alfanuméricos, hífen
+// ou underscore.
+var aliasRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,30}$`)
+
+// reservedAliases são os primeiros segmentos de rota que um alias não pode
+// assumir, para não sombrear endpoints do serviço.
+var reservedAliases = map[string]bool{
+	"health":  true,
+	"shorten": true,
+	"stats":   true,
+	"api":     true,
+	"metrics": true,
+	"qr":      true,
+}
+
 type shortenRequest struct {
-	URL string `json:"url"`
+	URL           string `json:"url"`
+	CustomAlias   string `json:"custom_alias"`
+	ExpiresInDays *int   `json:"expires_in_days"`
 }
 
 // shortenHandler mantém o contrato legado: GET /shorten?url=... com 200.
@@ -172,7 +192,7 @@ func (s *Server) shortenHandler(c *gin.Context) {
 		return
 	}
 
-	s.createShortURL(c, originalUrl, http.StatusOK, false)
+	s.createShortURL(c, originalUrl, "", nil, http.StatusOK, false)
 }
 
 // apiShortenHandler é a variante nova: POST /api/shorten com body JSON e 201.
@@ -183,35 +203,59 @@ func (s *Server) apiShortenHandler(c *gin.Context) {
 		return
 	}
 
-	s.createShortURL(c, req.URL, http.StatusCreated, true)
+	var expiresAt *time.Time
+	if req.ExpiresInDays != nil {
+		if *req.ExpiresInDays <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_in_days must be a positive integer"})
+			return
+		}
+		t := time.Now().Add(time.Duration(*req.ExpiresInDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
+
+	s.createShortURL(c, req.URL, req.CustomAlias, expiresAt, http.StatusCreated, true)
 }
 
-func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatus int, includeShortID bool) {
+func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expiresAt *time.Time, successStatus int, includeShortID bool) {
 	if err := validateURL(originalUrl, c.Request.Host); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Dedup: se a URL já foi encurtada, reaproveita o short_id existente.
 	urlHash := s.cipher.Hash(originalUrl)
-	if existing, err := s.repo.FindByURLHash(c.Request.Context(), urlHash); err == nil {
-		scheme := getScheme(c)
-		response := gin.H{
-			"original_url": originalUrl,
-			"short_url":    scheme + "://" + c.Request.Host + "/" + existing.ShortID,
-			"created_at":   existing.CreatedAt,
-			"existing":     true,
+
+	if alias != "" {
+		// Alias explícito: valida o formato e as rotas reservadas antes de
+		// tentar gravar. Não passa por dedup — o usuário quer este alias.
+		if !aliasRegex.MatchString(alias) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "custom_alias must match ^[a-zA-Z0-9_-]{3,30}$"})
+			return
 		}
-		if includeShortID {
-			response["short_id"] = existing.ShortID
+		if reservedAliases[strings.ToLower(alias)] {
+			c.JSON(http.StatusConflict, gin.H{"error": "custom_alias is reserved"})
+			return
 		}
-		metrics.ShortensTotal.Inc()
-		c.JSON(http.StatusOK, response)
-		return
-	} else if !errors.Is(err, storage.ErrNotFound) {
-		s.logger.Error("failed to look up URL hash", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
-		return
+	} else {
+		// Dedup: se a URL já foi encurtada, reaproveita o short_id existente.
+		if existing, err := s.repo.FindByURLHash(c.Request.Context(), urlHash); err == nil {
+			scheme := getScheme(c)
+			response := gin.H{
+				"original_url": originalUrl,
+				"short_url":    scheme + "://" + c.Request.Host + "/" + existing.ShortID,
+				"created_at":   existing.CreatedAt,
+				"existing":     true,
+			}
+			if includeShortID {
+				response["short_id"] = existing.ShortID
+			}
+			metrics.ShortensTotal.Inc()
+			c.JSON(http.StatusOK, response)
+			return
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			s.logger.Error("failed to look up URL hash", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+			return
+		}
 	}
 
 	encryptedURL, err := s.cipher.Encrypt(originalUrl)
@@ -221,12 +265,42 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		return
 	}
 
-	// A unicidade do short_id é garantida pela constraint UNIQUE: em caso
-	// de colisão, gera outro candidato, até 3 tentativas.
+	writeSuccess := func(shortId string, createdAt time.Time) {
+		scheme := getScheme(c)
+		response := gin.H{
+			"original_url": originalUrl,
+			"short_url":    scheme + "://" + c.Request.Host + "/" + shortId,
+			"created_at":   createdAt,
+		}
+		if includeShortID {
+			response["short_id"] = shortId
+		}
+		if expiresAt != nil {
+			response["expires_at"] = *expiresAt
+		}
+		metrics.ShortensTotal.Inc()
+		c.JSON(successStatus, response)
+	}
+
+	// Alias fixo: uma única tentativa; colisão vira 409 Conflict.
+	if alias != "" {
+		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
+		switch err := s.repo.Insert(c.Request.Context(), urlData); {
+		case err == nil:
+			writeSuccess(alias, urlData.CreatedAt)
+		case errors.Is(err, storage.ErrDuplicate):
+			c.JSON(http.StatusConflict, gin.H{"error": "custom_alias already in use"})
+		default:
+			s.logger.Error("failed to insert URL", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+		}
+		return
+	}
+
+	// A unicidade do short_id gerado é garantida pela constraint UNIQUE: em
+	// caso de colisão, gera outro candidato, até 3 tentativas.
 	const maxAttempts = 3
-	var urlData storage.URLData
-	inserted := false
-	for attempt := 1; attempt <= maxAttempts && !inserted; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		shortId, err := generateShortID()
 		if err != nil {
 			s.logger.Error("failed to generate short id", "error", err)
@@ -234,17 +308,11 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 			return
 		}
 
-		urlData = storage.URLData{
-			ShortID:     shortId,
-			OriginalURL: encryptedURL,
-			URLHash:     urlHash,
-			CreatedAt:   time.Now(),
-			AccessCount: 0,
-		}
-
+		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
-			inserted = true
+			writeSuccess(shortId, urlData.CreatedAt)
+			return
 		case errors.Is(err, storage.ErrDuplicate):
 			s.logger.Warn("short id collision, retrying", "short_id", shortId, "attempt", attempt)
 		default:
@@ -254,29 +322,8 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatu
 		}
 	}
 
-	if !inserted {
-		s.logger.Error("exhausted short id attempts", "attempts", maxAttempts)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
-		return
-	}
-
-	shortId := urlData.ShortID
-
-	scheme := getScheme(c)
-	host := c.Request.Host
-	shortUrl := scheme + "://" + host + "/" + shortId
-
-	response := gin.H{
-		"original_url": originalUrl,
-		"short_url":    shortUrl,
-		"created_at":   urlData.CreatedAt,
-	}
-	if includeShortID {
-		response["short_id"] = shortId
-	}
-
-	metrics.ShortensTotal.Inc()
-	c.JSON(successStatus, response)
+	s.logger.Error("exhausted short id attempts", "attempts", maxAttempts)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
 }
 
 func (s *Server) redirectHandler(c *gin.Context) {
@@ -290,6 +337,11 @@ func (s *Server) redirectHandler(c *gin.Context) {
 		}
 		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	if urlData.ExpiresAt != nil && time.Now().After(*urlData.ExpiresAt) {
+		c.JSON(http.StatusGone, gin.H{"error": "Short URL has expired"})
 		return
 	}
 
@@ -358,6 +410,32 @@ func (s *Server) statsHandler(c *gin.Context) {
 		"clicks_per_day": clickStats.ClicksPerDay,
 		"top_referrers":  clickStats.TopReferrers,
 	})
+}
+
+// qrHandler devolve um PNG com o QR code do short_url. Confirma que o
+// short link existe antes de gerar.
+func (s *Server) qrHandler(c *gin.Context) {
+	shortId := c.Param("shortId")
+
+	if _, err := s.repo.FindForRedirect(c.Request.Context(), shortId); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
+			return
+		}
+		s.logger.Error("failed to query DB", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	shortUrl := getScheme(c) + "://" + c.Request.Host + "/" + shortId
+	png, err := qrcode.Encode(shortUrl, qrcode.Medium, 256)
+	if err != nil {
+		s.logger.Error("failed to generate QR code", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate QR code"})
+		return
+	}
+
+	c.Data(http.StatusOK, "image/png", png)
 }
 
 func (s *Server) healthHandler(c *gin.Context) {
