@@ -22,6 +22,15 @@ type URLData struct {
 	AccessCount int
 }
 
+// ClickEvent é um evento de acesso a um short link, gravado de forma
+// assíncrona. Referrer e UserAgent podem ser vazios; IPHash é o HMAC do IP.
+type ClickEvent struct {
+	ShortID   string
+	Referrer  string
+	UserAgent string
+	IPHash    string
+}
+
 type Repository interface {
 	Insert(ctx context.Context, data URLData) error
 	FindByURLHash(ctx context.Context, urlHash string) (URLData, error)
@@ -29,4 +38,5 @@ type Repository interface {
 	FindByShortID(ctx context.Context, shortID string) (URLData, error)
 	IncrementAccessCount(ctx context.Context, shortID string) error
 	CountURLs(ctx context.Context) (int, error)
+	InsertClickEvent(ctx context.Context, e ClickEvent) error
 }

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/apolinario0x21/small-links/internal/analytics"
 	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	httpapi "github.com/apolinario0x21/small-links/internal/http"
@@ -54,7 +55,9 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("database migration completed")
 
-	server := httpapi.New(storage.NewPostgres(db), cipher, logger)
+	pg := storage.NewPostgres(db)
+	recorder := analytics.NewRecorder(pg, logger)
+	server := httpapi.New(pg, cipher, recorder, logger)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -82,5 +85,12 @@ func run(logger *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return srv.Shutdown(shutdownCtx)
+	err = srv.Shutdown(shutdownCtx)
+
+	// Drena os eventos de clique pendentes só depois que o servidor parou
+	// de aceitar requisições (nenhum Record concorrente resta). Roda antes
+	// do db.Close() adiado, que ainda é necessário para o flush.
+	recorder.Close()
+
+	return err
 }

@@ -37,6 +37,12 @@ func encrypt(plainText string) string {
 	return encrypted
 }
 
+// noopRecorder descarta eventos: os testes de HTTP não exercem o registro
+// assíncrono (coberto em internal/analytics), evitando inserts no sqlmock.
+type noopRecorder struct{}
+
+func (noopRecorder) Record(storage.ClickEvent) {}
+
 func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -47,7 +53,7 @@ func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	return server.Router(), mock
 }

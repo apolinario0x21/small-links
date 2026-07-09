@@ -18,18 +18,25 @@ import (
 
 var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
-// Server agrega as dependências dos handlers.
-type Server struct {
-	repo   storage.Repository
-	cipher *crypto.Cipher
-	logger *slog.Logger
+// ClickRecorder registra eventos de clique de forma assíncrona. Satisfeito
+// por *analytics.Recorder; um no-op serve para testes e para desabilitar.
+type ClickRecorder interface {
+	Record(e storage.ClickEvent)
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher, logger *slog.Logger) *Server {
+// Server agrega as dependências dos handlers.
+type Server struct {
+	repo     storage.Repository
+	cipher   *crypto.Cipher
+	recorder ClickRecorder
+	logger   *slog.Logger
+}
+
+func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{repo: repo, cipher: cipher, logger: logger}
+	return &Server{repo: repo, cipher: cipher, recorder: recorder, logger: logger}
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -275,6 +282,17 @@ func (s *Server) redirectHandler(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, decrypted)
+
+	// Registra o clique após responder o 302; o Record é não-bloqueante e
+	// o IP é guardado apenas como HMAC (nunca em claro — ver nota LGPD).
+	if s.recorder != nil {
+		s.recorder.Record(storage.ClickEvent{
+			ShortID:   shortId,
+			Referrer:  c.Request.Referer(),
+			UserAgent: c.Request.UserAgent(),
+			IPHash:    s.cipher.Hash(c.ClientIP()),
+		})
+	}
 }
 
 func (s *Server) statsHandler(c *gin.Context) {

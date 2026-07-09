@@ -133,6 +133,19 @@ func (p *Postgres) IncrementAccessCount(ctx context.Context, shortID string) err
 	return err
 }
 
+// InsertClickEvent grava um evento de clique. occurred_at usa o default
+// do banco (now()); referrer/user_agent vazios viram NULL para não poluir
+// as agregações de analytics.
+func (p *Postgres) InsertClickEvent(ctx context.Context, e ClickEvent) error {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))`
+	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash)
+	return err
+}
+
 func (p *Postgres) CountURLs(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
