@@ -13,6 +13,11 @@ var ErrNotFound = errors.New("short URL not found")
 // ErrDuplicate indica violação da constraint UNIQUE de short_id no insert.
 var ErrDuplicate = errors.New("short_id already exists")
 
+// ErrValueTooLong indica que um valor excede o limite da coluna
+// (string_data_right_truncation). Sinaliza divergência entre a validação
+// da aplicação e o schema; o handler deve responder 400, não 500.
+var ErrValueTooLong = errors.New("value exceeds column size")
+
 type URLData struct {
 	ID          int
 	ShortID     string

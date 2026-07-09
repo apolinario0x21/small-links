@@ -75,6 +75,14 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `^[a-zA-Z0-9_-]{3,30}$`; colisão com `short_id` existente ou rota reservada (`health`,
   `shorten`, `stats`, `api`, `metrics`, `qr`) devolve 409. Alias explícito ignora o dedup e
   não usa o retry de 3 tentativas (o alias é fixo).
+- **Largura de short_id (bug corrigido)**: o `aliasRegex` aceita até 30 chars, mas o schema
+  nasceu com `urls.short_id VARCHAR(6)` e `click_events.short_id VARCHAR(10)`. Aliases longos
+  falhavam o insert com `string_data_right_truncation`, que não é `unique_violation` e caía no
+  500 genérico. Migration 005 alinha ambas as colunas em `VARCHAR(30)`. Defesa em profundidade:
+  o storage mapeia `string_data_right_truncation` para `ErrValueTooLong` e o handler responde
+  400 (não 500) se validação e schema divergirem de novo.
+  **Lição**: limites de tamanho devem ter uma única fonte de verdade compartilhada entre a
+  validação da aplicação e o schema do banco.
 - **Expiração/TTL (item 6)**: `expires_in_days` (>0) no POST; migration 004 adiciona
   `urls.expires_at TIMESTAMPTZ` nullable. Redirect de link expirado responde 410 Gone (antes
   de incrementar `access_count`). Sem `expires_at`, o link é permanente.

@@ -290,6 +290,9 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			writeSuccess(alias, urlData.CreatedAt)
 		case errors.Is(err, storage.ErrDuplicate):
 			c.JSON(http.StatusConflict, gin.H{"error": "custom_alias already in use"})
+		case errors.Is(err, storage.ErrValueTooLong):
+			// Rede de segurança caso validação e schema divirjam de novo.
+			c.JSON(http.StatusBadRequest, gin.H{"error": "custom_alias is too long"})
 		default:
 			s.logger.Error("failed to insert URL", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
