@@ -1,6 +1,6 @@
 # Small Links
 
-![Go](https://img.shields.io/badge/Go-1.22.3-blue.svg)
+![Go](https://img.shields.io/badge/Go-1.25-blue.svg)
 ![Framework](https://img.shields.io/badge/Framework-Gin--v1.10.1-blueviolet.svg)
 [![Framework](https://img.shields.io/badge/Gin-v1.10.1-blueviolet.svg)](https://gin-gonic.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker&logoColor=white)](https://www.docker.com/)
@@ -21,7 +21,7 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 
 
 ## 🚀 Tecnologias utilizadas
-- Go 1.22+
+- Go 1.25+
 - Gin Web Framework
 - PostgreSQL (driver lib/pq)
 - Criptografia AES (pacote crypto/aes)
