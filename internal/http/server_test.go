@@ -1,4 +1,4 @@
-package main
+package http
 
 import (
 	"encoding/json"
@@ -10,31 +10,43 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
 )
 
 // Testes de caracterização: capturam o comportamento ATUAL dos 4 endpoints,
-// com o banco substituído por go-sqlmock através da variável global db.
+// com o banco substituído por go-sqlmock por trás do Repository.
 
 const testKey = "0123456789abcdef0123456789abcdef"
 
 var errTest = errors.New("simulated database error")
 
+var testCipher, _ = crypto.New([]byte(testKey))
+
+// encrypt mantém a assinatura usada nas asserções dos testes de
+// caracterização originais.
+func encrypt(plainText string) string {
+	encrypted, err := testCipher.Encrypt(plainText)
+	if err != nil {
+		panic(err)
+	}
+	return encrypted
+}
+
 func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	secretKey = []byte(testKey)
 
 	mockDB, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	if err != nil {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
-	db = mockDB
-	repo = storage.NewPostgres(mockDB)
 	t.Cleanup(func() { mockDB.Close() })
 
-	return setupRouter(), mock
+	server := New(storage.NewPostgres(mockDB), testCipher)
+
+	return server.Router(), mock
 }
 
 func doRequest(router *gin.Engine, method, path string) *httptest.ResponseRecorder {
