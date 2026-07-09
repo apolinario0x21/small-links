@@ -31,7 +31,7 @@ var (
 	lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 )
 
-func init() {
+func bootstrap() {
 
 	key := os.Getenv("ENCRYPTION_KEY")
 	if key == "" {
@@ -314,11 +314,7 @@ func healthHandler(c *gin.Context) {
 	})
 }
 
-func main() {
-	if os.Getenv("GIN_MODE") == "" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
+func setupRouter() *gin.Engine {
 	router := gin.Default()
 
 	router.Use(func(c *gin.Context) {
@@ -338,6 +334,18 @@ func main() {
 	router.GET("/shorten", shortenHandler)
 	router.GET("/stats/:shortId", statsHandler)
 	router.GET("/:shortId", redirectHandler)
+
+	return router
+}
+
+func main() {
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	bootstrap()
+
+	router := setupRouter()
 
 	port := os.Getenv("PORT")
 	if port == "" {
