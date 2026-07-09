@@ -33,3 +33,6 @@ go.work.sum
 
 # intellij
 .idea
+
+# Compiled binary
+go-gin-url
