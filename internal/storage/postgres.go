@@ -133,6 +133,19 @@ func (p *Postgres) IncrementAccessCount(ctx context.Context, shortID string) err
 	return err
 }
 
+// InsertClickEvent grava um evento de clique. occurred_at usa o default
+// do banco (now()); referrer/user_agent vazios viram NULL para não poluir
+// as agregações de analytics.
+func (p *Postgres) InsertClickEvent(ctx context.Context, e ClickEvent) error {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))`
+	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash)
+	return err
+}
+
 func (p *Postgres) CountURLs(ctx context.Context) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -140,4 +153,74 @@ func (p *Postgres) CountURLs(ctx context.Context) (int, error) {
 	var total int
 	err := p.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM urls`).Scan(&total)
 	return total, err
+}
+
+// ClickStats devolve total de cliques, cliques por dia nos últimos 30 dias
+// e os 5 referrers mais frequentes de um short link.
+func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	stats := ClickStats{
+		ClicksPerDay: []DailyClicks{},
+		TopReferrers: []ReferrerCount{},
+	}
+
+	err := p.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM click_events WHERE short_id = $1`, shortID,
+	).Scan(&stats.TotalClicks)
+	if err != nil {
+		return ClickStats{}, err
+	}
+
+	dayRows, err := p.db.QueryContext(ctx,
+		`SELECT date_trunc('day', occurred_at) AS day, COUNT(*)
+		 FROM click_events
+		 WHERE short_id = $1 AND occurred_at >= now() - interval '30 days'
+		 GROUP BY day
+		 ORDER BY day`, shortID)
+	if err != nil {
+		return ClickStats{}, err
+	}
+	defer dayRows.Close()
+
+	for dayRows.Next() {
+		var day time.Time
+		var count int
+		if err := dayRows.Scan(&day, &count); err != nil {
+			return ClickStats{}, err
+		}
+		stats.ClicksPerDay = append(stats.ClicksPerDay, DailyClicks{
+			Day:   day.Format("2006-01-02"),
+			Count: count,
+		})
+	}
+	if err := dayRows.Err(); err != nil {
+		return ClickStats{}, err
+	}
+
+	refRows, err := p.db.QueryContext(ctx,
+		`SELECT referrer, COUNT(*) AS n
+		 FROM click_events
+		 WHERE short_id = $1 AND referrer IS NOT NULL
+		 GROUP BY referrer
+		 ORDER BY n DESC, referrer
+		 LIMIT 5`, shortID)
+	if err != nil {
+		return ClickStats{}, err
+	}
+	defer refRows.Close()
+
+	for refRows.Next() {
+		var ref ReferrerCount
+		if err := refRows.Scan(&ref.Referrer, &ref.Count); err != nil {
+			return ClickStats{}, err
+		}
+		stats.TopReferrers = append(stats.TopReferrers, ref)
+	}
+	if err := refRows.Err(); err != nil {
+		return ClickStats{}, err
+	}
+
+	return stats, nil
 }

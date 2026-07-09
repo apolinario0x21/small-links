@@ -62,8 +62,9 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 | POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201; se a URL já foi encurtada, responde 200 com `"existing": true` e o `short_id` existente) |
 | GET    | `/shorten?url={url_original}` | Gera uma URL curta (legado, responde 200) |
 | GET    | `/{short_id}` | Redireciona para a URL original (AES) |
-| GET    | `/stats/{short_id}`  | Obter Estatísticas da URL |
+| GET    | `/stats/{short_id}`  | Estatísticas da URL: `access_count`, `total_clicks`, `clicks_per_day` (últimos 30 dias) e `top_referrers` (top 5) |
 | GET    | `/health`  | Verificação de Saúde  |
+| GET    | `/metrics`  | Métricas Prometheus (counters de redirects/shortens/rate-limited e histograma de latência) |
 
 
 ## 🔧 Configuração
@@ -82,6 +83,13 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 - URLs são criptografadas antes do armazenamento para proteger a privacidade do usuário 
 - IDs curtos são gerados usando números aleatórios criptograficamente seguros
 - Criação de URLs limitada a 10 requisições por minuto por IP (HTTP 429 ao exceder)
+
+### 🔒 Privacidade (LGPD)
+
+- Endereços IP dos acessos **nunca** são armazenados em claro: apenas o HMAC-SHA256 do IP
+  (`ip_hash`) é gravado na tabela `click_events`, para contagem/deduplicação sem expor o IP.
+- Os eventos de clique guardam também referrer e user-agent, usados apenas para as estatísticas
+  agregadas expostas em `/stats/{short_id}`.
 
 ## 📊 Exemplos de Uso
 ### Usando cURL
@@ -117,10 +125,11 @@ console.log('Contagem de acessos:', statsData.access_count);
 ```
 ## Componentes Principais
 
-- Camada de Criptografia: Criptografia AES-256-GCM autenticada (com leitura do formato CTR legado)
+- Camada de Criptografia: Criptografia AES-256-GCM autenticada
 - Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
 - Geração de ID: Identificadores de 6 caracteres criptograficamente seguros
-- Monitoramento: Health checks integrados e análise de acessos 
+- Analytics: Eventos de clique gravados de forma assíncrona (buffer + worker), sem travar o redirect
+- Monitoramento: Health checks, estatísticas de acesso e métricas Prometheus em `/metrics`
 
 ## 🚢 Deploy
 Railway (Recomendado)
@@ -134,12 +143,20 @@ Railway (Recomendado)
 
 
 ## 🔍 Monitoramento
-### Endpoint de Saúd
+### Endpoint de Saúde
 
 O endpoint `/health` fornece:
 - Status do serviço
 - Número total de URLs armazenadas
 - Timestamp atual
+
+### Endpoint de Métricas
+
+O endpoint `/metrics` expõe métricas no formato Prometheus:
+- `smalllinks_redirects_total` — redirects bem-sucedidos
+- `smalllinks_shortens_total` — URLs encurtadas
+- `smalllinks_rate_limited_total` — requisições barradas pelo rate limiting
+- `smalllinks_http_request_duration_seconds` — histograma de latência por método, rota e status
 
 ## Logs
 A aplicação registra:

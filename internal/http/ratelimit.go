@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apolinario0x21/small-links/internal/metrics"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
@@ -76,6 +77,7 @@ func (l *ipRateLimiter) cleanupLoop() {
 func (l *ipRateLimiter) middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !l.allow(c.ClientIP()) {
+			metrics.RateLimitedTotal.Inc()
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate limit exceeded, try again later"})
 			return
 		}
