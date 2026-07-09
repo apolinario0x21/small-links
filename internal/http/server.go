@@ -34,9 +34,11 @@ func (s *Server) Router() *gin.Engine {
 
 	router.Use(corsMiddleware())
 
+	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
+
 	router.GET("/health", s.healthHandler)
-	router.GET("/shorten", s.shortenHandler)
-	router.POST("/api/shorten", s.apiShortenHandler)
+	router.GET("/shorten", createLimiter, s.shortenHandler)
+	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
 	router.GET("/:shortId", s.redirectHandler)
 

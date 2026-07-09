@@ -236,6 +236,28 @@ func TestShortenInsertFailure(t *testing.T) {
 	expectations(t, mock)
 }
 
+func TestShortenRateLimit(t *testing.T) {
+	router, mock := setupTest(t)
+
+	// Requisições sem o parâmetro url não tocam o banco, mas contam para o
+	// limite. O burst é 10: as 10 primeiras passam (400), a 11ª leva 429.
+	for i := 0; i < 10; i++ {
+		if w := doRequest(router, http.MethodGet, "/shorten"); w.Code != http.StatusBadRequest {
+			t.Fatalf("request %d: status = %d, want 400", i+1, w.Code)
+		}
+	}
+
+	w := doRequest(router, http.MethodGet, "/shorten")
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 after burst", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "rate limit exceeded, try again later" {
+		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
 // --- GET /:shortId ---
 
 func TestRedirectSuccess(t *testing.T) {

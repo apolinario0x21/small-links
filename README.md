@@ -81,6 +81,7 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 - A chave de criptografia deve ter exatamente 32 caracteres
 - URLs são criptografadas antes do armazenamento para proteger a privacidade do usuário 
 - IDs curtos são gerados usando números aleatórios criptograficamente seguros
+- Criação de URLs limitada a 10 requisições por minuto por IP (HTTP 429 ao exceder)
 
 ## 📊 Exemplos de Uso
 ### Usando cURL
