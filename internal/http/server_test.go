@@ -82,9 +82,13 @@ func expectations(t *testing.T, mock sqlmock.Sqlmock) {
 	}
 }
 
+// dedupQueryRegex casa a consulta de dedup inteira, incluindo o filtro que
+// ignora registros expirados (dedup não pode devolver link morto).
+const dedupQueryRegex = `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1 AND \(expires_at IS NULL OR expires_at > now\(\)\)`
+
 // expectNoDedup registra a consulta de dedup por url_hash sem resultado.
 func expectNoDedup(mock sqlmock.Sqlmock) {
-	mock.ExpectQuery(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1`).
+	mock.ExpectQuery(dedupQueryRegex).
 		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}))
 }
 
@@ -290,6 +294,72 @@ func TestAPIShortenDedupReturnsExistingShortID(t *testing.T) {
 	}
 	if body["short_url"] != "http://example.com/jaexis" {
 		t.Errorf("short_url = %q", body["short_url"])
+	}
+	expectations(t, mock)
+}
+
+// (a) O único match está expirado: o filtro da query o exclui, o dedup não
+// encontra nada e um link novo é criado normalmente.
+func TestAPIShortenDedupIgnoresExpiredLink(t *testing.T) {
+	router, mock := setupTest(t)
+
+	expectNoDedup(mock) // filtro de expiração exclui o registro expirado
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com/expirada"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (novo link, não o expirado); body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["existing"] != nil {
+		t.Errorf("existing = %v, want ausente em criação nova", body["existing"])
+	}
+	shortID, _ := body["short_id"].(string)
+	if !regexp.MustCompile(`^[a-zA-Z0-9]{6}$`).MatchString(shortID) {
+		t.Errorf("short_id = %q, want novo id de 6 alfanuméricos", shortID)
+	}
+	expectations(t, mock)
+}
+
+// (b) Match com expiração no futuro continua sendo reaproveitado.
+func TestAPIShortenDedupReusesValidLink(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(dedupQueryRegex).
+		WithArgs(testCipher.Hash("https://www.example.com/valida")).
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
+			AddRow("valido", encrypt("https://www.example.com/valida"), time.Now(), 2))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com/valida"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["existing"] != true || body["short_id"] != "valido" {
+		t.Errorf("existing = %v, short_id = %v; want reaproveitamento de %q", body["existing"], body["short_id"], "valido")
+	}
+	expectations(t, mock)
+}
+
+// (c) Link permanente (expires_at NULL) segue sendo reaproveitado.
+func TestAPIShortenDedupReusesPermanentLink(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(dedupQueryRegex).
+		WithArgs(testCipher.Hash("https://www.example.com/permanente")).
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
+			AddRow("eterno", encrypt("https://www.example.com/permanente"), time.Now(), 9))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com/permanente"}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["existing"] != true || body["short_id"] != "eterno" {
+		t.Errorf("existing = %v, short_id = %v; want reaproveitamento de %q", body["existing"], body["short_id"], "eterno")
 	}
 	expectations(t, mock)
 }
