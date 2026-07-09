@@ -1,6 +1,10 @@
 package crypto
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"testing"
 )
@@ -43,6 +47,54 @@ func TestEncryptUsesRandomIV(t *testing.T) {
 	b, _ := c.Encrypt("https://www.example.com")
 	if a == b {
 		t.Error("two encryptions of the same input should differ (random IV)")
+	}
+}
+
+func encryptLegacyCTR(t *testing.T, key []byte, plainText string) string {
+	t.Helper()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte(plainText)
+	cipherText := make([]byte, aes.BlockSize+len(data))
+	iv := cipherText[:aes.BlockSize]
+	if _, err := rand.Read(iv); err != nil {
+		t.Fatal(err)
+	}
+
+	stream := cipher.NewCTR(block, iv)
+	stream.XORKeyStream(cipherText[aes.BlockSize:], data)
+	return hex.EncodeToString(cipherText)
+}
+
+func TestDecryptFallsBackToLegacyCTR(t *testing.T) {
+	c, _ := New(testKey)
+	original := "https://www.example.com/registro-antigo"
+	legacy := encryptLegacyCTR(t, testKey, original)
+
+	decrypted, err := c.Decrypt(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decrypted != original {
+		t.Errorf("legacy decrypt = %q, want %q", decrypted, original)
+	}
+}
+
+func TestDecryptTamperedGCMFailsAuthentication(t *testing.T) {
+	c, _ := New(testKey)
+	encrypted, _ := c.Encrypt("https://www.example.com")
+
+	raw, _ := hex.DecodeString(encrypted)
+	raw[len(raw)-1] ^= 0xff
+	tampered := hex.EncodeToString(raw)
+
+	// A autenticação GCM rejeita o dado adulterado; o fallback CTR ainda
+	// roda, mas jamais reproduz o texto original.
+	if decrypted, err := c.Decrypt(tampered); err == nil && decrypted == "https://www.example.com" {
+		t.Error("tampered cipher text must not decrypt to the original plain text")
 	}
 }
 
