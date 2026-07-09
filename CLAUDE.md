@@ -60,6 +60,15 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 
+## Pendências de deploy
+
+1. **TRUNCATE no deploy final**: rodar `TRUNCATE TABLE urls;` no banco do Railway antes de
+   qualquer teste — os registros CTR legados foram deliberadamente descartados (Caminho A,
+   jul/2026). Até lá, links antigos em produção estão quebrados: comportamento conhecido e aceito.
+2. **`cmd/migrate-gcm` é código morto** com essa decisão — remover em commit futuro, junto
+   com seus testes.
+3. **Commits marcados como "aplicar após operação manual"** devem ficar em PR separado.
+
 ## Backlog priorizado
 
 1. ~~**Higiene**~~ ✅ (PR #1)
