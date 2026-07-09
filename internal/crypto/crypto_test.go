@@ -50,6 +50,33 @@ func TestEncryptUsesRandomIV(t *testing.T) {
 	}
 }
 
+func TestHashIsDeterministicAndDistinct(t *testing.T) {
+	c, _ := New(testKey)
+
+	a := c.Hash("https://www.example.com")
+	b := c.Hash("https://www.example.com")
+	other := c.Hash("https://www.example.org")
+
+	if a != b {
+		t.Error("Hash must be deterministic for the same URL")
+	}
+	if a == other {
+		t.Error("Hash must differ for different URLs")
+	}
+	if len(a) != 64 {
+		t.Errorf("Hash length = %d, want 64 hex chars", len(a))
+	}
+}
+
+func TestHashDependsOnKey(t *testing.T) {
+	c1, _ := New(testKey)
+	c2, _ := New([]byte("ffffffffffffffffffffffffffffffff"))
+
+	if c1.Hash("https://www.example.com") == c2.Hash("https://www.example.com") {
+		t.Error("Hash must depend on the key (HMAC)")
+	}
+}
+
 func encryptLegacyCTR(t *testing.T, key []byte, plainText string) string {
 	t.Helper()
 	block, err := aes.NewCipher(key)

@@ -8,7 +8,9 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,6 +32,16 @@ func New(key []byte) (*Cipher, error) {
 		return nil, fmt.Errorf("encryption key must be %d bytes long, got %d", KeySize, len(key))
 	}
 	return &Cipher{key: key}, nil
+}
+
+// Hash retorna o HMAC-SHA256 da URL, hex-encoded (64 caracteres).
+// Determinístico: permite localizar uma URL já encurtada sem decifrar
+// os registros, já que a cifragem com nonce aleatório impede busca
+// direta pelo ciphertext.
+func (c *Cipher) Hash(url string) string {
+	mac := hmac.New(sha256.New, c.key)
+	mac.Write([]byte(url))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func (c *Cipher) gcm() (cipher.AEAD, error) {
