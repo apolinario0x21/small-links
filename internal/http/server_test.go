@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,8 +99,92 @@ func TestShortenInvalidURL(t *testing.T) {
 		t.Errorf("status = %d, want 400", w.Code)
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "URL must start with http:// or https://" {
-		t.Errorf("error = %q, want %q", body["error"], "URL must start with http:// or https://")
+	if body["error"] != "URL must be a valid http:// or https:// URL" {
+		t.Errorf("error = %q, want %q", body["error"], "URL must be a valid http:// or https:// URL")
+	}
+	expectations(t, mock)
+}
+
+// --- POST /api/shorten ---
+
+func doJSONPost(router *gin.Engine, path, body string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+	return w
+}
+
+func TestAPIShortenSuccess(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectQuery(`SELECT EXISTS\(SELECT 1 FROM urls WHERE short_id = \$1\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectExec(`INSERT INTO urls`).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.destino.com/pagina"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	shortID, _ := body["short_id"].(string)
+	if !regexp.MustCompile(`^[a-zA-Z0-9]{6}$`).MatchString(shortID) {
+		t.Errorf("short_id = %q, want 6 alfanuméricos", shortID)
+	}
+	if body["original_url"] != "https://www.destino.com/pagina" {
+		t.Errorf("original_url = %q", body["original_url"])
+	}
+	if body["short_url"] != "http://example.com/"+shortID {
+		t.Errorf("short_url = %q, want host + short_id", body["short_url"])
+	}
+	if _, ok := body["created_at"]; !ok {
+		t.Error("response missing created_at")
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenInvalidBody(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, body := range []string{``, `{}`, `{"url": ""}`, `nao é json`} {
+		w := doJSONPost(router, "/api/shorten", body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want 400", body, w.Code)
+		}
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenInvalidURL(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, u := range []string{"ftp://x.com", "http://", "somentetexto", "https:///caminho"} {
+		w := doJSONPost(router, "/api/shorten", `{"url": "`+u+`"}`)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("url %q: status = %d, want 400", u, w.Code)
+		}
+		body := decodeBody(t, w)
+		if body["error"] != "URL must be a valid http:// or https:// URL" {
+			t.Errorf("url %q: error = %q", u, body["error"])
+		}
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenRejectsSelfReference(t *testing.T) {
+	router, mock := setupTest(t)
+
+	// httptest.NewRequest usa example.com como host da requisição.
+	w := doJSONPost(router, "/api/shorten", `{"url": "http://example.com/abc123"}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "URL must not point to this service" {
+		t.Errorf("error = %q, want self-reference rejection", body["error"])
 	}
 	expectations(t, mock)
 }

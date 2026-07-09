@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ func (s *Server) Router() *gin.Engine {
 
 	router.GET("/health", s.healthHandler)
 	router.GET("/shorten", s.shortenHandler)
+	router.POST("/api/shorten", s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
 	router.GET("/:shortId", s.redirectHandler)
 
@@ -99,10 +101,39 @@ func getScheme(c *gin.Context) string {
 	return "http"
 }
 
-func isValidURL(url string) bool {
-	return strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://")
+var (
+	errInvalidURL       = errors.New("URL must be a valid http:// or https:// URL")
+	errSelfReferenceURL = errors.New("URL must not point to this service")
+)
+
+// validateURL exige scheme http/https, host não vazio e rejeita URLs que
+// apontem para o próprio serviço (evita loop de redirecionamento).
+func validateURL(rawURL, requestHost string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return errInvalidURL
+	}
+
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return errInvalidURL
+	}
+
+	if parsed.Host == "" {
+		return errInvalidURL
+	}
+
+	if strings.EqualFold(parsed.Host, requestHost) {
+		return errSelfReferenceURL
+	}
+
+	return nil
 }
 
+type shortenRequest struct {
+	URL string `json:"url"`
+}
+
+// shortenHandler mantém o contrato legado: GET /shorten?url=... com 200.
 func (s *Server) shortenHandler(c *gin.Context) {
 	originalUrl := c.Query("url")
 
@@ -111,8 +142,23 @@ func (s *Server) shortenHandler(c *gin.Context) {
 		return
 	}
 
-	if !isValidURL(originalUrl) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "URL must start with http:// or https://"})
+	s.createShortURL(c, originalUrl, http.StatusOK, false)
+}
+
+// apiShortenHandler é a variante nova: POST /api/shorten com body JSON e 201.
+func (s *Server) apiShortenHandler(c *gin.Context) {
+	var req shortenRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "request body must be JSON with a non-empty \"url\" field"})
+		return
+	}
+
+	s.createShortURL(c, req.URL, http.StatusCreated, true)
+}
+
+func (s *Server) createShortURL(c *gin.Context, originalUrl string, successStatus int, includeShortID bool) {
+	if err := validateURL(originalUrl, c.Request.Host); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -141,11 +187,16 @@ func (s *Server) shortenHandler(c *gin.Context) {
 	host := c.Request.Host
 	shortUrl := scheme + "://" + host + "/" + shortId
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"original_url": originalUrl,
 		"short_url":    shortUrl,
 		"created_at":   urlData.CreatedAt,
-	})
+	}
+	if includeShortID {
+		response["short_id"] = shortId
+	}
+
+	c.JSON(successStatus, response)
 }
 
 func (s *Server) redirectHandler(c *gin.Context) {

@@ -59,7 +59,8 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 
 | Método | Rota      | Descrição                             |
 |--------|-----------|---------------------------------------|
-| GET    | `/shorten?url={url_original}` | Gera uma URL curta |
+| POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201) |
+| GET    | `/shorten?url={url_original}` | Gera uma URL curta (legado, responde 200) |
 | GET    | `/{short_id}` | Redireciona para a URL original (AES) |
 | GET    | `/stats/{short_id}`  | Obter Estatísticas da URL |
 | GET    | `/health`  | Verificação de Saúde  |
@@ -86,6 +87,11 @@ Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
 
 ```bash
 ### Criar uma URL encurtada
+curl -X POST "https://seu-dominio.com/api/shorten" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.google.com"}'
+
+### Criar uma URL encurtada (endpoint legado)
 curl "https://seu-dominio.com/shorten?url=https://www.google.com"
 
 ### Obter estatísticas
