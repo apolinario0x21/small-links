@@ -52,6 +52,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   (migration 002), preenchida no create e pelo backfill. HMAC-SHA256 com a `ENCRYPTION_KEY`
   permite lookup determinístico sem decifrar (o nonce aleatório impede busca pelo ciphertext).
   URL repetida devolve o `short_id` existente com HTTP 200 e `"existing": true`.
+  Correção pós-TTL: a busca por `url_hash` ignora registros expirados
+  (`expires_at IS NULL OR expires_at > now()`) — dedup não devolve link morto; se o único
+  match estiver expirado, um link novo é criado normalmente.
 - **Unicidade de short_id**: sem `SELECT EXISTS` prévio; o insert confia na constraint UNIQUE,
   com até 3 tentativas em colisão (`storage.ErrDuplicate`).
 - **Rate limiting**: 10 req/min por IP (burst 10) nos endpoints de criação, HTTP 429.

@@ -86,14 +86,15 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 	return err
 }
 
-// FindByURLHash localiza uma URL já encurtada pelo HMAC da URL original.
+// FindByURLHash localiza uma URL já encurtada pelo HMAC da URL original,
+// ignorando registros expirados — dedup não deve devolver um link morto.
 // Registros anteriores ao backfill têm url_hash NULL e nunca casam aqui.
 func (p *Postgres) FindByURLHash(ctx context.Context, urlHash string) (URLData, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	var data URLData
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 ORDER BY id LIMIT 1`, urlHash)
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 AND (expires_at IS NULL OR expires_at > now()) ORDER BY id LIMIT 1`, urlHash)
 	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.CreatedAt, &data.AccessCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
