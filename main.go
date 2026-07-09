@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"log"
 	"math/big"
 	"net/http"
@@ -12,20 +14,13 @@ import (
 
 	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
+	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
-	_ "github.com/lib/pq"
 )
-
-type URLData struct {
-	ID          int       `db:"id"`
-	ShortID     string    `db:"short_id"`
-	OriginalURL string    `db:"original_url"`
-	CreatedAt   time.Time `db:"created_at"`
-	AccessCount int       `db:"access_count"`
-}
 
 var (
 	db          *sql.DB
+	repo        storage.Repository
 	secretKey   []byte
 	lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 )
@@ -38,47 +33,20 @@ func bootstrap() config.Config {
 
 	secretKey = []byte(cfg.EncryptionKey)
 
-	connectDB(cfg.DatabaseURL)
-	migrateDB()
+	db, err = storage.Connect(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Successfully connected to the database!")
+
+	if err := storage.Migrate(db); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Database migration completed.")
+
+	repo = storage.NewPostgres(db)
 
 	return cfg
-}
-
-func connectDB(connStr string) {
-	var err error
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal("Failed to open a DB connection: ", err)
-	}
-
-	for i := 0; i < 5; i++ {
-		err = db.Ping()
-		if err == nil {
-			log.Println("Successfully connected to the database!")
-			return
-		}
-		log.Printf("Unsuccessful database connection, retrying in 5 seconds... (%d/5)", i+1)
-		time.Sleep(5 * time.Second)
-	}
-	log.Fatal("Several unsuccessful connection attempts: ", err)
-}
-
-func migrateDB() {
-	const createTableSQL = `
-	CREATE TABLE IF NOT EXISTS urls (
-		id SERIAL PRIMARY KEY,
-		short_id VARCHAR(6) UNIQUE NOT NULL,
-		original_url TEXT NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-		access_count INT NOT NULL DEFAULT 0
-	);`
-
-	_, err := db.Exec(createTableSQL)
-	if err != nil {
-		log.Fatal("Failed to create 'urls' table: ", err)
-	}
-
-	log.Println("Database migration completed.")
 }
 
 func encrypt(originalUrl string) string {
@@ -113,7 +81,7 @@ func decrypt(encryptedUrl string) string {
 	return decrypted
 }
 
-func generateShortId() string {
+func generateShortId(ctx context.Context) string {
 	for {
 		b := make([]rune, 6)
 		for i := range b {
@@ -128,9 +96,7 @@ func generateShortId() string {
 
 		shortId := string(b)
 
-		var exists bool
-		query := "SELECT EXISTS(SELECT 1 FROM urls WHERE short_id = $1)"
-		err := db.QueryRow(query, shortId).Scan(&exists)
+		exists, err := repo.ShortIDExists(ctx, shortId)
 		if err != nil {
 			log.Printf("Database check error: %v", err)
 			continue
@@ -181,16 +147,15 @@ func shortenHandler(c *gin.Context) {
 		return
 	}
 
-	shortId := generateShortId()
-	urlData := URLData{
+	shortId := generateShortId(c.Request.Context())
+	urlData := storage.URLData{
 		ShortID:     shortId,
 		OriginalURL: encryptedURL,
 		CreatedAt:   time.Now(),
 		AccessCount: 0,
 	}
 
-	insertSQL := `INSERT INTO urls (short_id, original_url, created_at, access_count) VALUES ($1, $2, $3, $4)`
-	_, err := db.Exec(insertSQL, urlData.ShortID, urlData.OriginalURL, urlData.CreatedAt, urlData.AccessCount)
+	err := repo.Insert(c.Request.Context(), urlData)
 	if err != nil {
 		log.Printf("Failed to insert URL into DB: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
@@ -211,11 +176,9 @@ func shortenHandler(c *gin.Context) {
 func redirectHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	var urlData URLData
-	row := db.QueryRow(`SELECT short_id, original_url, access_count FROM urls WHERE short_id = $1`, shortId)
-	err := row.Scan(&urlData.ShortID, &urlData.OriginalURL, &urlData.AccessCount)
+	urlData, err := repo.FindForRedirect(c.Request.Context(), shortId)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, storage.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
 			return
 		}
@@ -224,9 +187,7 @@ func redirectHandler(c *gin.Context) {
 		return
 	}
 
-	updateSQL := `UPDATE urls SET access_count = access_count + 1 WHERE short_id = $1`
-	_, err = db.Exec(updateSQL, shortId)
-	if err != nil {
+	if err := repo.IncrementAccessCount(c.Request.Context(), shortId); err != nil {
 		log.Printf("Failed to update access count: %v", err)
 	}
 
@@ -242,11 +203,9 @@ func redirectHandler(c *gin.Context) {
 func statsHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	var urlData URLData
-	row := db.QueryRow(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE short_id = $1`, shortId)
-	err := row.Scan(&urlData.ShortID, &urlData.OriginalURL, &urlData.CreatedAt, &urlData.AccessCount)
+	urlData, err := repo.FindByShortID(c.Request.Context(), shortId)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, storage.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
 			return
 		}
@@ -270,8 +229,7 @@ func statsHandler(c *gin.Context) {
 }
 
 func healthHandler(c *gin.Context) {
-	var totalUrls int
-	err := db.QueryRow(`SELECT COUNT(*) FROM urls`).Scan(&totalUrls)
+	totalUrls, err := repo.CountURLs(c.Request.Context())
 	if err != nil {
 		log.Printf("Failed to query total URLs: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,6 +31,7 @@ func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 		t.Fatalf("failed to create sqlmock: %v", err)
 	}
 	db = mockDB
+	repo = storage.NewPostgres(mockDB)
 	t.Cleanup(func() { mockDB.Close() })
 
 	return setupRouter(), mock
