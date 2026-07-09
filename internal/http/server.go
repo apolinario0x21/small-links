@@ -316,11 +316,23 @@ func (s *Server) statsHandler(c *gin.Context) {
 		return
 	}
 
+	clickStats, err := s.repo.ClickStats(c.Request.Context(), shortId)
+	if err != nil {
+		s.logger.Error("failed to query click stats", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
+		// Campos mantidos por compatibilidade.
 		"short_id":     shortId,
 		"original_url": decrypted,
 		"created_at":   urlData.CreatedAt,
 		"access_count": urlData.AccessCount,
+		// Analytics (item 6).
+		"total_clicks":   clickStats.TotalClicks,
+		"clicks_per_day": clickStats.ClicksPerDay,
+		"top_referrers":  clickStats.TopReferrers,
 	})
 }
 

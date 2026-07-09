@@ -31,6 +31,26 @@ type ClickEvent struct {
 	IPHash    string
 }
 
+// DailyClicks agrega cliques por dia (Day no formato ISO YYYY-MM-DD).
+type DailyClicks struct {
+	Day   string `json:"day"`
+	Count int    `json:"count"`
+}
+
+// ReferrerCount agrega cliques por referrer.
+type ReferrerCount struct {
+	Referrer string `json:"referrer"`
+	Count    int    `json:"count"`
+}
+
+// ClickStats reúne as métricas de acesso expostas no endpoint de stats.
+// As fatias são sempre não-nulas para serializar como [] e não null.
+type ClickStats struct {
+	TotalClicks  int             `json:"total_clicks"`
+	ClicksPerDay []DailyClicks   `json:"clicks_per_day"`
+	TopReferrers []ReferrerCount `json:"top_referrers"`
+}
+
 type Repository interface {
 	Insert(ctx context.Context, data URLData) error
 	FindByURLHash(ctx context.Context, urlHash string) (URLData, error)
@@ -39,4 +59,5 @@ type Repository interface {
 	IncrementAccessCount(ctx context.Context, shortID string) error
 	CountURLs(ctx context.Context) (int, error)
 	InsertClickEvent(ctx context.Context, e ClickEvent) error
+	ClickStats(ctx context.Context, shortID string) (ClickStats, error)
 }

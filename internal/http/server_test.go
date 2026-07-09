@@ -420,6 +420,31 @@ func TestRedirectUpdateFailureStillRedirects(t *testing.T) {
 
 // --- GET /stats/:shortId ---
 
+// expectClickStats registra as três queries de ClickStats na ordem em que
+// o repositório as executa: total, cliques/dia e top referrers.
+func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []storage.DailyClicks, refs []storage.ReferrerCount) {
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM click_events WHERE short_id = \$1`).
+		WithArgs(shortID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(total))
+
+	dayRows := sqlmock.NewRows([]string{"day", "count"})
+	for _, d := range days {
+		parsed, _ := time.Parse("2006-01-02", d.Day)
+		dayRows.AddRow(parsed, d.Count)
+	}
+	mock.ExpectQuery(`SELECT date_trunc\('day', occurred_at\) AS day, COUNT\(\*\)`).
+		WithArgs(shortID).
+		WillReturnRows(dayRows)
+
+	refRows := sqlmock.NewRows([]string{"referrer", "n"})
+	for _, r := range refs {
+		refRows.AddRow(r.Referrer, r.Count)
+	}
+	mock.ExpectQuery(`SELECT referrer, COUNT\(\*\) AS n`).
+		WithArgs(shortID).
+		WillReturnRows(refRows)
+}
+
 func TestStatsSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
@@ -429,6 +454,11 @@ func TestStatsSuccess(t *testing.T) {
 		WithArgs("abc123").
 		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
 			AddRow("abc123", encrypted, createdAt, 42))
+	expectClickStats(mock, "abc123",
+		42,
+		[]storage.DailyClicks{{Day: "2026-01-01", Count: 30}, {Day: "2026-01-02", Count: 12}},
+		[]storage.ReferrerCount{{Referrer: "https://news.example", Count: 20}, {Referrer: "https://x.example", Count: 8}},
+	)
 
 	w := doRequest(router, http.MethodGet, "/stats/abc123")
 
@@ -447,6 +477,53 @@ func TestStatsSuccess(t *testing.T) {
 	}
 	if _, ok := body["created_at"]; !ok {
 		t.Error("response missing created_at")
+	}
+
+	// Campos novos de analytics.
+	if body["total_clicks"] != float64(42) {
+		t.Errorf("total_clicks = %v, want 42", body["total_clicks"])
+	}
+	perDay, ok := body["clicks_per_day"].([]any)
+	if !ok || len(perDay) != 2 {
+		t.Fatalf("clicks_per_day = %v, want 2 entradas", body["clicks_per_day"])
+	}
+	first := perDay[0].(map[string]any)
+	if first["day"] != "2026-01-01" || first["count"] != float64(30) {
+		t.Errorf("clicks_per_day[0] = %v, want {2026-01-01, 30}", first)
+	}
+	refs, ok := body["top_referrers"].([]any)
+	if !ok || len(refs) != 2 {
+		t.Fatalf("top_referrers = %v, want 2 entradas", body["top_referrers"])
+	}
+	topRef := refs[0].(map[string]any)
+	if topRef["referrer"] != "https://news.example" || topRef["count"] != float64(20) {
+		t.Errorf("top_referrers[0] = %v, want {news.example, 20}", topRef)
+	}
+	expectations(t, mock)
+}
+
+func TestStatsEmptyAnalytics(t *testing.T) {
+	router, mock := setupTest(t)
+
+	encrypted := encrypt("https://www.example.com")
+	mock.ExpectQuery(`SELECT short_id, original_url, created_at, access_count FROM urls WHERE short_id = \$1`).
+		WithArgs("abc123").
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
+			AddRow("abc123", encrypted, time.Now(), 0))
+	expectClickStats(mock, "abc123", 0, nil, nil)
+
+	w := doRequest(router, http.MethodGet, "/stats/abc123")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	// Fatias vazias devem serializar como [] (não null) por compatibilidade.
+	if got := strings.Count(w.Body.String(), "null"); got != 0 {
+		t.Errorf("body contém null: %s", w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if arr, ok := body["clicks_per_day"].([]any); !ok || len(arr) != 0 {
+		t.Errorf("clicks_per_day = %v, want []", body["clicks_per_day"])
 	}
 	expectations(t, mock)
 }
