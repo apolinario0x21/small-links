@@ -13,34 +13,33 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 ## ⚙️ Funcionalidades
 
 - 🔐 Criptografia Segura: URLs são criptografadas usando AES-256 antes do armazenamento
-- 💾 Armazenamento Persistente: Armazenamento baseado em arquivo JSON com backup automático
+- 💾 Armazenamento Persistente: PostgreSQL com criação automática do schema na inicialização
 - 📊 Análise de Dados: Rastreamento de contagem de acessos e timestamps de criação para cada URL
 - 🚀 Pronto para Produção: Health checks, tratamento de erros e otimizado para deploy no Railway
 - 🌐 Detecção Inteligente de Protocolo: Detecção automática de HTTPS/HTTP baseada no ambiente de deploy
-- ⚡ Alta Performance: Operações thread-safe com estruturas de dados eficientes
 - 🔄 Suporte CORS: Suporte integrado para Cross-Origin Resource Sharing
 
 
 ## 🚀 Tecnologias utilizadas
-- Go 1.21+
+- Go 1.22+
 - Gin Web Framework
+- PostgreSQL (driver lib/pq)
 - Criptografia AES (pacote crypto/aes)
-- .env para variáveis de ambiente
+- Docker e Docker Compose
 - Railway para deploy (opcional)
 
 ## 📦 Instalação e uso local
 
 1. Clone o repositório
    ```bash
-   git clone https://github.com/apolinario0x21/go-gin-short-url.git
-   cd seu-repositorio
+   git clone https://github.com/apolinario0x21/small-links.git
+   cd small-links
    ```
-2. Crie um arquivo .env
+2. Defina as variáveis de ambiente
    ```bash
-   ENCRYPTION_KEY=sua_chave_de_criptografia
+   export ENCRYPTION_KEY=sua_chave_de_criptografia   # exatamente 32 caracteres
+   export DATABASE_URL=postgres://usuario:senha@localhost:5432/smalllinks?sslmode=disable
    ```
-   Obs: A chave precisa ter 32 caracteres.
-
 
 3. Instale as dependências
    ```
@@ -49,6 +48,11 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 4. Rode a aplicação
    ```
    go run main.go
+   ```
+
+Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
+   ```bash
+   docker compose up --build
    ```
 
 ## 📬 Endpoints disponíveis
@@ -65,7 +69,8 @@ Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento p
 
 | Variável | Descrição      | Padrão                             | Obrigatório |
 |--------|-----------|---------------------------------------|-------------|
-| ENCRYPTION_KEY    | `Chave de criptografia AES de 32 caracteres` | sua_chave_de_criptografia | Recomendado |
+| ENCRYPTION_KEY    | `Chave de criptografia AES de 32 caracteres` | — | Sim |
+| DATABASE_URL    | String de conexão PostgreSQL | — | Sim |
 | PORT    | Porta do servidor | 8080 | Não         |
 | GIN_MODE    | Modo do framework Gin `(debug/release)`  | release | Não |
 
@@ -106,9 +111,8 @@ console.log('Contagem de acessos:', statsData.access_count);
 ## Componentes Principais
 
 - Camada de Criptografia: Criptografia AES-256-CTR para proteção de URLs
-- Engine de Armazenamento: Persistência baseada em arquivo JSON com escritas atômicas
+- Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
 - Geração de ID: Identificadores de 6 caracteres criptograficamente seguros
-- Concorrência: Operações thread-safe usando RWMutex
 - Monitoramento: Health checks integrados e análise de acessos 
 
 ## 🚢 Deploy
@@ -117,6 +121,7 @@ Railway (Recomendado)
 - Faça um fork deste repositório
 - Conecte sua conta do Railway ao GitHub
 - Crie um novo projeto a partir do seu fork
+- Adicione um banco PostgreSQL ao projeto (o Railway define `DATABASE_URL` automaticamente)
 - Configure a variável de ambiente ENCRYPTION_KEY
 - Deploy automático no push
 
@@ -133,7 +138,7 @@ O endpoint `/health` fornece:
 A aplicação registra:
 
 - Informações de inicialização
-- Operações de carregamento/salvamento de dados
+- Conexão e migração do banco de dados
 - Condições de erro
 - Avisos de segurança
 
