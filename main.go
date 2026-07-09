@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -29,29 +30,21 @@ var (
 	lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 )
 
-func bootstrap() {
-
-	key := os.Getenv("ENCRYPTION_KEY")
-	if key == "" {
-		log.Fatal("ENCRYPTION_KEY environment variable is not set")
+func bootstrap() config.Config {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	if len(key) != 32 {
-		log.Fatal("Encryption key must be 32 bytes long")
-	}
+	secretKey = []byte(cfg.EncryptionKey)
 
-	secretKey = []byte(key)
-
-	connectDB()
+	connectDB(cfg.DatabaseURL)
 	migrateDB()
+
+	return cfg
 }
 
-func connectDB() {
-	connStr := os.Getenv("DATABASE_URL")
-	if connStr == "" {
-		log.Fatal("DATABASE_URL environment variable is not set")
-	}
-
+func connectDB(connStr string) {
 	var err error
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
@@ -324,16 +317,10 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	bootstrap()
+	cfg := bootstrap()
 
 	router := setupRouter()
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-		log.Printf("No PORT environment variable set, defaulting to %s", port)
-	}
-
-	log.Printf("Starting server on port %s", port)
-	router.Run(":" + port)
+	log.Printf("Starting server on port %s", cfg.Port)
+	router.Run(":" + cfg.Port)
 }
