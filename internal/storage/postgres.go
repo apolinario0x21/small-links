@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
+	"sort"
 	"time"
 
+	"github.com/apolinario0x21/small-links/migrations"
 	_ "github.com/lib/pq"
 )
 
@@ -41,19 +44,23 @@ func Connect(connStr string) (*sql.DB, error) {
 	return nil, fmt.Errorf("several unsuccessful connection attempts: %w", err)
 }
 
-// Migrate cria a tabela urls caso ainda não exista.
+// Migrate aplica, em ordem, os arquivos SQL embutidos em migrations/.
+// Todos os statements são idempotentes (CREATE TABLE IF NOT EXISTS).
 func Migrate(db *sql.DB) error {
-	const createTableSQL = `
-	CREATE TABLE IF NOT EXISTS urls (
-		id SERIAL PRIMARY KEY,
-		short_id VARCHAR(6) UNIQUE NOT NULL,
-		original_url TEXT NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-		access_count INT NOT NULL DEFAULT 0
-	);`
+	entries, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		return fmt.Errorf("failed to list migrations: %w", err)
+	}
+	sort.Strings(entries)
 
-	if _, err := db.Exec(createTableSQL); err != nil {
-		return fmt.Errorf("failed to create 'urls' table: %w", err)
+	for _, name := range entries {
+		sqlBytes, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			return fmt.Errorf("failed to read migration %s: %w", name, err)
+		}
+		if _, err := db.Exec(string(sqlBytes)); err != nil {
+			return fmt.Errorf("failed to apply migration %s: %w", name, err)
+		}
 	}
 
 	return nil
