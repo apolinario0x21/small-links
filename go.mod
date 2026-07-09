@@ -1,4 +1,4 @@
-module go-gin-url
+module github.com/apolinario0x21/small-links
 
 go 1.22.3
 
