@@ -202,6 +202,70 @@ func TestAPIShortenRejectsSelfReference(t *testing.T) {
 	expectations(t, mock)
 }
 
+func TestAPIShortenWithCustomAlias(t *testing.T) {
+	router, mock := setupTest(t)
+
+	// Alias explícito não passa por dedup; grava direto com o alias.
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "custom_alias": "meu-link_1"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["short_id"] != "meu-link_1" {
+		t.Errorf("short_id = %q, want %q", body["short_id"], "meu-link_1")
+	}
+	if body["short_url"] != "http://example.com/meu-link_1" {
+		t.Errorf("short_url = %q, want alias", body["short_url"])
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenAliasInvalidFormat(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, alias := range []string{"ab", "com espaço", "tem/barra", strings.Repeat("x", 31)} {
+		body := `{"url": "https://www.example.com", "custom_alias": "` + alias + `"}`
+		w := doJSONPost(router, "/api/shorten", body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("alias %q: status = %d, want 400", alias, w.Code)
+		}
+	}
+	expectations(t, mock) // nenhuma query esperada
+}
+
+func TestAPIShortenAliasReserved(t *testing.T) {
+	router, mock := setupTest(t)
+
+	for _, alias := range []string{"api", "health", "metrics", "Stats"} {
+		body := `{"url": "https://www.example.com", "custom_alias": "` + alias + `"}`
+		w := doJSONPost(router, "/api/shorten", body)
+		if w.Code != http.StatusConflict {
+			t.Errorf("alias %q: status = %d, want 409", alias, w.Code)
+		}
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenAliasCollision(t *testing.T) {
+	router, mock := setupTest(t)
+
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnError(storage.ErrDuplicate)
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com", "custom_alias": "tomado"}`)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "custom_alias already in use" {
+		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
 func TestAPIShortenDedupReturnsExistingShortID(t *testing.T) {
 	router, mock := setupTest(t)
 
