@@ -10,6 +10,7 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 - Testes: `go test ./...`
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Dependências: `go mod tidy`
+- Regenerar docs OpenAPI: `swag init -g cmd/server/main.go --parseInternal -o docs` (após mudar anotações)
 
 ## Variáveis de ambiente
 
@@ -19,6 +20,7 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 | DATABASE_URL   | Sim         | String de conexão PostgreSQL               |
 | PORT           | Não         | Padrão 8080                                |
 | GIN_MODE       | Não         | debug/release (padrão release)             |
+| SWAGGER_ENABLED| Não         | UI Swagger em /swagger (padrão on; `false` desabilita) |
 
 ## Arquitetura
 
@@ -30,6 +32,7 @@ internal/storage/    → interface Repository + implementação Postgres (contex
 internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker)
 internal/metrics/    → coletores Prometheus (counters + histograma de latência)
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
+docs/                → OpenAPI gerado pelo swag (docs.go/swagger.json/yaml); importado no main
 migrations/          → SQL versionado, aplicado via go:embed na inicialização
 ```
 
@@ -89,6 +92,14 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   de incrementar `access_count`). Sem `expires_at`, o link é permanente.
 - **QR code (item 6)**: `GET /qr/:shortId` gera PNG (`image/png`) do short_url via
   `skip2/go-qrcode`, após confirmar que o short link existe (404 caso contrário).
+- **Swagger/OpenAPI**: anotações `swag` nos handlers (`internal/http/`) e infos gerais em
+  `cmd/server/main.go`; artefatos gerados em `docs/` (versionados) e importados via blank import
+  no main para registrar a spec. UI servida em `GET /swagger/*any` com `gin-swagger`. A rota é
+  desabilitável por `SWAGGER_ENABLED=false` (produção) e `"swagger"` entrou nas rotas reservadas
+  (não colide com short_id). Modelos de resposta só-de-documentação em `internal/http/api_docs.go`
+  (os handlers continuam usando `gin.H` — comportamento inalterado). Atenção: a versão da lib
+  `swaggo/swag` no `go.mod` deve casar com a do CLI que gerou `docs/` (senão o build quebra em
+  campos como `LeftDelim`).
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +

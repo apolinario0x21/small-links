@@ -1,0 +1,285 @@
+basePath: /
+definitions:
+  http.DailyClicksDoc:
+    properties:
+      count:
+        example: 12
+        type: integer
+      day:
+        example: "2026-07-10"
+        type: string
+    type: object
+  http.ErrorResponse:
+    properties:
+      error:
+        example: Short URL not found
+        type: string
+    type: object
+  http.HealthResponse:
+    properties:
+      status:
+        example: healthy
+        type: string
+      timestamp:
+        example: "2026-07-10T12:00:00Z"
+        type: string
+      total_urls:
+        example: 123
+        type: integer
+    type: object
+  http.ReferrerCountDoc:
+    properties:
+      count:
+        example: 20
+        type: integer
+      referrer:
+        example: https://news.exemplo.com
+        type: string
+    type: object
+  http.ShortenRequest:
+    properties:
+      custom_alias:
+        example: promo
+        type: string
+      expires_in_days:
+        example: 30
+        type: integer
+      url:
+        example: https://www.exemplo.com/pagina
+        type: string
+    type: object
+  http.ShortenResponse:
+    properties:
+      created_at:
+        example: "2026-07-10T12:00:00Z"
+        type: string
+      existing:
+        example: false
+        type: boolean
+      expires_at:
+        example: "2026-08-09T12:00:00Z"
+        type: string
+      original_url:
+        example: https://www.exemplo.com/pagina
+        type: string
+      short_id:
+        example: promo
+        type: string
+      short_url:
+        example: https://exemplo.com/promo
+        type: string
+    type: object
+  http.StatsResponse:
+    properties:
+      access_count:
+        example: 42
+        type: integer
+      clicks_per_day:
+        items:
+          $ref: '#/definitions/http.DailyClicksDoc'
+        type: array
+      created_at:
+        example: "2026-07-10T12:00:00Z"
+        type: string
+      original_url:
+        example: https://www.exemplo.com/pagina
+        type: string
+      short_id:
+        example: promo
+        type: string
+      top_referrers:
+        items:
+          $ref: '#/definitions/http.ReferrerCountDoc'
+        type: array
+      total_clicks:
+        example: 42
+        type: integer
+    type: object
+info:
+  contact:
+    name: Small Links
+  description: |-
+    Encurtador de URLs em Go com AES-256-GCM, deduplicação por HMAC, alias customizado, TTL/expiração, QR code, analytics de clique e métricas Prometheus.
+    As URLs originais são cifradas em repouso; o IP dos acessos é gravado apenas como HMAC (LGPD).
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  title: Small Links API
+  version: "1.0"
+paths:
+  /{shortId}:
+    get:
+      description: Responde 302 para a URL original. 404 se inexistente, 410 se expirado.
+      parameters:
+      - description: Identificador do short link
+        in: path
+        name: shortId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect para a URL original
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "410":
+          description: Link expirado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Redireciona um short link
+      tags:
+      - redirect
+  /api/shorten:
+    post:
+      consumes:
+      - application/json
+      description: 'Cria um short link. Campos opcionais: custom_alias e expires_in_days.
+        Se a URL já existir, responde 200 com "existing": true.'
+      parameters:
+      - description: URL e opções
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.ShortenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: URL já existente (dedup)
+          schema:
+            $ref: '#/definitions/http.ShortenResponse'
+        "201":
+          description: Short link criado
+          schema:
+            $ref: '#/definitions/http.ShortenResponse'
+        "400":
+          description: Body ou URL inválidos
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "409":
+          description: Alias já em uso ou reservado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Encurta uma URL
+      tags:
+      - shorten
+  /health:
+    get:
+      description: Retorna status do serviço, total de URLs e timestamp.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.HealthResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Health check
+      tags:
+      - health
+  /qr/{shortId}:
+    get:
+      description: Gera o PNG do short_url. Confirma que o link existe antes de gerar.
+      parameters:
+      - description: Identificador do short link
+        in: path
+        name: shortId
+        required: true
+        type: string
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: Imagem PNG
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: QR code de um short link
+      tags:
+      - qr
+  /shorten:
+    get:
+      description: Variante GET mantida por compatibilidade; delega à mesma lógica
+        do POST.
+      parameters:
+      - description: URL original (http/https)
+        in: query
+        name: url
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.ShortenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Encurta uma URL (endpoint legado)
+      tags:
+      - shorten
+  /stats/{shortId}:
+    get:
+      description: Retorna access_count, total_clicks, clicks_per_day (30 dias) e
+        top_referrers (top 5).
+      parameters:
+      - description: Identificador do short link
+        in: path
+        name: shortId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/http.StatsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Estatísticas de um short link
+      tags:
+      - stats
+schemes:
+- http
+- https
+swagger: "2.0"
