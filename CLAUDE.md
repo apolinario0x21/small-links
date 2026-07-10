@@ -97,6 +97,15 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   Prometheus com `uid: prometheus`, referenciado pelos painéis do dashboard, e o dashboard
   *Small Links — Overview*). É ambiente de desenvolvimento — **não** faz parte do deploy; a app
   e o `docker-compose.yml` principal não foram alterados.
+- **Dashboard provisionado sem dados (bug corrigido)**: dashboards provisionados exigem um `uid`
+  de datasource **fixo e explícito**, referenciado igual em todos os painéis *e* em cada target.
+  Isso já estava correto nos arquivos, mas o volume `grafana_data` podia persistir um datasource
+  "Prometheus" antigo com uid aleatório — provisionar por nome não troca o uid, então os painéis
+  (uid `prometheus`) ficavam órfãos e vazios. Correção: `deleteDatasources` no provisioning
+  remove o datasource antes de recriá-lo com o uid fixo, tornando o vínculo determinístico mesmo
+  com volume persistido; o dashboard ganhou `id: null`/`version`. **Lição**: com provisionamento,
+  o uid do datasource é o contrato entre datasource e painéis — fixe-o dos dois lados e garanta
+  que estado persistido não sobreponha um uid divergente.
 
 ## Pendências de deploy
 

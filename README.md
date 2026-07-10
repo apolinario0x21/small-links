@@ -219,6 +219,22 @@ O dashboard traz: taxa de redirects/s, latência p50/p95/p99 do redirect, requis
 status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, e memória residente/goroutines
 do processo.
 
+### Dashboard sem dados / painéis vazios
+
+Se o datasource funciona no **Explore** mas o dashboard provisionado aparece vazio, o volume
+`grafana_data` provavelmente guarda um datasource "Prometheus" de uma execução anterior com
+**uid diferente** de `prometheus` — os painéis referenciam `uid: prometheus` e ficam órfãos.
+O provisionamento agora remove e recria o datasource com o uid fixo (`deleteDatasources`),
+mas se o estado antigo persistir, recrie do zero:
+
+```bash
+docker compose -f docker-compose.observability.yml down -v
+docker compose -f docker-compose.observability.yml up -d
+```
+
+Painéis de latência (p50/p95/p99) só mostram dados **depois** de haver tráfego de redirect —
+gere alguns acessos a short links para populá-los.
+
 ## Logs
 A aplicação registra:
 
