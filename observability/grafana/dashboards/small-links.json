@@ -12,6 +12,8 @@
       }
     ]
   },
+  "id": null,
+  "version": 1,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "10s",
