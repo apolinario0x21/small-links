@@ -1,0 +1,416 @@
+{
+    "schemes": [
+        "http",
+        "https"
+    ],
+    "swagger": "2.0",
+    "info": {
+        "description": "Encurtador de URLs em Go com AES-256-GCM, deduplicação por HMAC, alias customizado, TTL/expiração, QR code, analytics de clique e métricas Prometheus.\nAs URLs originais são cifradas em repouso; o IP dos acessos é gravado apenas como HMAC (LGPD).",
+        "title": "Small Links API",
+        "contact": {
+            "name": "Small Links"
+        },
+        "license": {
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
+        },
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/api/shorten": {
+            "post": {
+                "description": "Cria um short link. Campos opcionais: custom_alias e expires_in_days. Se a URL já existir, responde 200 com \"existing\": true.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "shorten"
+                ],
+                "summary": "Encurta uma URL",
+                "parameters": [
+                    {
+                        "description": "URL e opções",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/http.ShortenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "URL já existente (dedup)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ShortenResponse"
+                        }
+                    },
+                    "201": {
+                        "description": "Short link criado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ShortenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Body ou URL inválidos",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Alias já em uso ou reservado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health": {
+            "get": {
+                "description": "Retorna status do serviço, total de URLs e timestamp.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.HealthResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/qr/{shortId}": {
+            "get": {
+                "description": "Gera o PNG do short_url. Confirma que o link existe antes de gerar.",
+                "produces": [
+                    "image/png"
+                ],
+                "tags": [
+                    "qr"
+                ],
+                "summary": "QR code de um short link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Identificador do short link",
+                        "name": "shortId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Imagem PNG",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/shorten": {
+            "get": {
+                "description": "Variante GET mantida por compatibilidade; delega à mesma lógica do POST.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "shorten"
+                ],
+                "summary": "Encurta uma URL (endpoint legado)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "URL original (http/https)",
+                        "name": "url",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.ShortenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/stats/{shortId}": {
+            "get": {
+                "description": "Retorna access_count, total_clicks, clicks_per_day (30 dias) e top_referrers (top 5).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stats"
+                ],
+                "summary": "Estatísticas de um short link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Identificador do short link",
+                        "name": "shortId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/http.StatsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/{shortId}": {
+            "get": {
+                "description": "Responde 302 para a URL original. 404 se inexistente, 410 se expirado.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "redirect"
+                ],
+                "summary": "Redireciona um short link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Identificador do short link",
+                        "name": "shortId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect para a URL original"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "Link expirado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "http.DailyClicksDoc": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "day": {
+                    "type": "string",
+                    "example": "2026-07-10"
+                }
+            }
+        },
+        "http.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string",
+                    "example": "Short URL not found"
+                }
+            }
+        },
+        "http.HealthResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "healthy"
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-07-10T12:00:00Z"
+                },
+                "total_urls": {
+                    "type": "integer",
+                    "example": 123
+                }
+            }
+        },
+        "http.ReferrerCountDoc": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "referrer": {
+                    "type": "string",
+                    "example": "https://news.exemplo.com"
+                }
+            }
+        },
+        "http.ShortenRequest": {
+            "type": "object",
+            "properties": {
+                "custom_alias": {
+                    "type": "string",
+                    "example": "promo"
+                },
+                "expires_in_days": {
+                    "type": "integer",
+                    "example": 30
+                },
+                "url": {
+                    "type": "string",
+                    "example": "https://www.exemplo.com/pagina"
+                }
+            }
+        },
+        "http.ShortenResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-07-10T12:00:00Z"
+                },
+                "existing": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "expires_at": {
+                    "type": "string",
+                    "example": "2026-08-09T12:00:00Z"
+                },
+                "original_url": {
+                    "type": "string",
+                    "example": "https://www.exemplo.com/pagina"
+                },
+                "short_id": {
+                    "type": "string",
+                    "example": "promo"
+                },
+                "short_url": {
+                    "type": "string",
+                    "example": "https://exemplo.com/promo"
+                }
+            }
+        },
+        "http.StatsResponse": {
+            "type": "object",
+            "properties": {
+                "access_count": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "clicks_per_day": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.DailyClicksDoc"
+                    }
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-07-10T12:00:00Z"
+                },
+                "original_url": {
+                    "type": "string",
+                    "example": "https://www.exemplo.com/pagina"
+                },
+                "short_id": {
+                    "type": "string",
+                    "example": "promo"
+                },
+                "top_referrers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.ReferrerCountDoc"
+                    }
+                },
+                "total_clicks": {
+                    "type": "integer",
+                    "example": 42
+                }
+            }
+        }
+    }
+}

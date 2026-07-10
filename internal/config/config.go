@@ -15,10 +15,11 @@ var (
 )
 
 type Config struct {
-	EncryptionKey string
-	DatabaseURL   string
-	Port          string
-	GinMode       string
+	EncryptionKey  string
+	DatabaseURL    string
+	Port           string
+	GinMode        string
+	SwaggerEnabled bool
 }
 
 func Load() (Config, error) {
@@ -27,6 +28,9 @@ func Load() (Config, error) {
 		DatabaseURL:   os.Getenv("DATABASE_URL"),
 		Port:          os.Getenv("PORT"),
 		GinMode:       os.Getenv("GIN_MODE"),
+		// A UI do Swagger fica ligada por padrão; defina SWAGGER_ENABLED=false
+		// para desabilitá-la (ex.: em produção).
+		SwaggerEnabled: os.Getenv("SWAGGER_ENABLED") != "false",
 	}
 
 	if cfg.EncryptionKey == "" {

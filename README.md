@@ -34,6 +34,7 @@ caracterização cobrindo os endpoints.
   confiável atrás de proxy.
 - **Observabilidade** — endpoint `/metrics` no formato Prometheus e stack local de Grafana
   provisionada.
+- **Documentação interativa** — OpenAPI/Swagger UI em `/swagger` (desabilitável por env var).
 
 ## 🧰 Stack técnica
 
@@ -46,6 +47,7 @@ caracterização cobrindo os endpoints.
 | Rate limiting | `golang.org/x/time/rate` |
 | Métricas | Prometheus (`client_golang`) |
 | QR code | `skip2/go-qrcode` |
+| Documentação | OpenAPI/Swagger (`swaggo/swag` + `gin-swagger`) |
 | Empacotamento | Docker + Docker Compose |
 | CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`) |
 | Deploy | Railway |
@@ -78,6 +80,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 | `GET`  | `/qr/{short_id}` | QR code do short link em PNG (`image/png`). |
 | `GET`  | `/health` | Health check (`status`, `total_urls`, `timestamp`). |
 | `GET`  | `/metrics` | Métricas no formato Prometheus. |
+| `GET`  | `/swagger/*` | Documentação interativa da API (Swagger UI). Desabilitável por env var. |
 
 ### Exemplo — criar um short link
 
@@ -137,6 +140,21 @@ curl "https://[SEU-DOMINIO]/stats/promo"
 curl "https://[SEU-DOMINIO]/qr/promo" --output qr.png
 ```
 
+### 📖 Documentação interativa (Swagger)
+
+A API é documentada via OpenAPI e servida com uma UI interativa (Swagger UI):
+
+```
+http://localhost:8080/swagger/index.html
+```
+
+Lá é possível ver todos os endpoints, schemas de request/response e disparar chamadas de teste.
+A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para desabilitá-la.
+
+> As anotações ficam nos handlers (`internal/http/`) e nas infos gerais em `cmd/server/main.go`.
+> Após alterá-las, regenere os artefatos em `docs/` com
+> [`swag`](https://github.com/swaggo/swag): `swag init -g cmd/server/main.go --parseInternal -o docs`.
+
 ## 🔧 Variáveis de ambiente
 
 | Variável | Obrigatória | Padrão | Descrição |
@@ -145,6 +163,7 @@ curl "https://[SEU-DOMINIO]/qr/promo" --output qr.png
 | `DATABASE_URL` | Sim | — | String de conexão PostgreSQL. |
 | `PORT` | Não | `8080` | Porta do servidor HTTP. |
 | `GIN_MODE` | Não | `release` | Modo do Gin (`debug`/`release`). |
+| `SWAGGER_ENABLED` | Não | `true` | UI do Swagger em `/swagger`. Defina `false` para desabilitar (ex.: produção). |
 
 ## 🚀 Rodando localmente
 

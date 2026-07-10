@@ -45,6 +45,10 @@ type noopRecorder struct{}
 func (noopRecorder) Record(storage.ClickEvent) {}
 
 func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
+	return setupTestSwagger(t, true)
+}
+
+func setupTestSwagger(t *testing.T, swaggerEnabled bool) (*gin.Engine, sqlmock.Sqlmock) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -54,7 +58,7 @@ func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled)
 
 	return server.Router(), mock
 }
@@ -523,6 +527,30 @@ func TestShortenRateLimit(t *testing.T) {
 	body := decodeBody(t, w)
 	if body["error"] != "rate limit exceeded, try again later" {
 		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
+// --- GET /swagger ---
+
+func TestSwaggerUIServedWhenEnabled(t *testing.T) {
+	router, mock := setupTestSwagger(t, true)
+
+	w := doRequest(router, http.MethodGet, "/swagger/index.html")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (UI do Swagger)", w.Code)
+	}
+	expectations(t, mock)
+}
+
+func TestSwaggerDisabledReturns404(t *testing.T) {
+	router, mock := setupTestSwagger(t, false)
+
+	w := doRequest(router, http.MethodGet, "/swagger/index.html")
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 quando o Swagger está desabilitado", w.Code)
 	}
 	expectations(t, mock)
 }

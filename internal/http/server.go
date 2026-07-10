@@ -19,6 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/skip2/go-qrcode"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
@@ -31,17 +33,18 @@ type ClickRecorder interface {
 
 // Server agrega as dependências dos handlers.
 type Server struct {
-	repo     storage.Repository
-	cipher   *crypto.Cipher
-	recorder ClickRecorder
-	logger   *slog.Logger
+	repo           storage.Repository
+	cipher         *crypto.Cipher
+	recorder       ClickRecorder
+	logger         *slog.Logger
+	swaggerEnabled bool
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, logger *slog.Logger) *Server {
+func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, logger *slog.Logger, swaggerEnabled bool) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{repo: repo, cipher: cipher, recorder: recorder, logger: logger}
+	return &Server{repo: repo, cipher: cipher, recorder: recorder, logger: logger, swaggerEnabled: swaggerEnabled}
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -67,6 +70,13 @@ func (s *Server) Router() *gin.Engine {
 	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
 	router.GET("/qr/:shortId", s.qrHandler)
+
+	// UI interativa do Swagger/OpenAPI. Registrada antes da rota catch-all
+	// /:shortId e desabilitável via SWAGGER_ENABLED=false (produção).
+	if s.swaggerEnabled {
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
+
 	router.GET("/:shortId", s.redirectHandler)
 
 	return router
@@ -175,15 +185,27 @@ var reservedAliases = map[string]bool{
 	"api":     true,
 	"metrics": true,
 	"qr":      true,
+	"swagger": true,
 }
 
-type shortenRequest struct {
-	URL           string `json:"url"`
-	CustomAlias   string `json:"custom_alias"`
-	ExpiresInDays *int   `json:"expires_in_days"`
+// ShortenRequest é o corpo do POST /api/shorten.
+type ShortenRequest struct {
+	URL           string `json:"url" example:"https://www.exemplo.com/pagina"`
+	CustomAlias   string `json:"custom_alias,omitempty" example:"promo"`
+	ExpiresInDays *int   `json:"expires_in_days,omitempty" example:"30"`
 }
 
 // shortenHandler mantém o contrato legado: GET /shorten?url=... com 200.
+// @Summary      Encurta uma URL (endpoint legado)
+// @Description  Variante GET mantida por compatibilidade; delega à mesma lógica do POST.
+// @Tags         shorten
+// @Produce      json
+// @Param        url  query     string  true  "URL original (http/https)"
+// @Success      200  {object}  ShortenResponse
+// @Failure      400  {object}  ErrorResponse
+// @Failure      429  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /shorten [get]
 func (s *Server) shortenHandler(c *gin.Context) {
 	originalUrl := c.Query("url")
 
@@ -196,8 +218,20 @@ func (s *Server) shortenHandler(c *gin.Context) {
 }
 
 // apiShortenHandler é a variante nova: POST /api/shorten com body JSON e 201.
+// @Summary      Encurta uma URL
+// @Description  Cria um short link. Campos opcionais: custom_alias e expires_in_days. Se a URL já existir, responde 200 com "existing": true.
+// @Tags         shorten
+// @Accept       json
+// @Produce      json
+// @Param        request  body      ShortenRequest  true  "URL e opções"
+// @Success      201      {object}  ShortenResponse  "Short link criado"
+// @Success      200      {object}  ShortenResponse  "URL já existente (dedup)"
+// @Failure      400      {object}  ErrorResponse    "Body ou URL inválidos"
+// @Failure      409      {object}  ErrorResponse    "Alias já em uso ou reservado"
+// @Failure      500      {object}  ErrorResponse
+// @Router       /api/shorten [post]
 func (s *Server) apiShortenHandler(c *gin.Context) {
-	var req shortenRequest
+	var req ShortenRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.URL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "request body must be JSON with a non-empty \"url\" field"})
 		return
@@ -329,6 +363,17 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
 }
 
+// redirectHandler resolve o short link e redireciona para a URL original.
+// @Summary      Redireciona um short link
+// @Description  Responde 302 para a URL original. 404 se inexistente, 410 se expirado.
+// @Tags         redirect
+// @Produce      json
+// @Param        shortId  path  string  true  "Identificador do short link"
+// @Success      302  "Redirect para a URL original"
+// @Failure      404  {object}  ErrorResponse
+// @Failure      410  {object}  ErrorResponse  "Link expirado"
+// @Failure      500  {object}  ErrorResponse
+// @Router       /{shortId} [get]
 func (s *Server) redirectHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
@@ -374,6 +419,16 @@ func (s *Server) redirectHandler(c *gin.Context) {
 	}
 }
 
+// statsHandler devolve estatísticas de acesso de um short link.
+// @Summary      Estatísticas de um short link
+// @Description  Retorna access_count, total_clicks, clicks_per_day (30 dias) e top_referrers (top 5).
+// @Tags         stats
+// @Produce      json
+// @Param        shortId  path      string  true  "Identificador do short link"
+// @Success      200  {object}  StatsResponse
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /stats/{shortId} [get]
 func (s *Server) statsHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
@@ -417,6 +472,15 @@ func (s *Server) statsHandler(c *gin.Context) {
 
 // qrHandler devolve um PNG com o QR code do short_url. Confirma que o
 // short link existe antes de gerar.
+// @Summary      QR code de um short link
+// @Description  Gera o PNG do short_url. Confirma que o link existe antes de gerar.
+// @Tags         qr
+// @Produce      png
+// @Param        shortId  path  string  true  "Identificador do short link"
+// @Success      200  {file}    binary         "Imagem PNG"
+// @Failure      404  {object}  ErrorResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /qr/{shortId} [get]
 func (s *Server) qrHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
@@ -441,6 +505,14 @@ func (s *Server) qrHandler(c *gin.Context) {
 	c.Data(http.StatusOK, "image/png", png)
 }
 
+// healthHandler é o health check do serviço.
+// @Summary      Health check
+// @Description  Retorna status do serviço, total de URLs e timestamp.
+// @Tags         health
+// @Produce      json
+// @Success      200  {object}  HealthResponse
+// @Failure      500  {object}  ErrorResponse
+// @Router       /health [get]
 func (s *Server) healthHandler(c *gin.Context) {
 	totalUrls, err := s.repo.CountURLs(c.Request.Context())
 	if err != nil {

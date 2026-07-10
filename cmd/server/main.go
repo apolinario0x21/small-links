@@ -16,8 +16,20 @@ import (
 	httpapi "github.com/apolinario0x21/small-links/internal/http"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
+
+	// Registra a especificação OpenAPI gerada por swag (init()).
+	_ "github.com/apolinario0x21/small-links/docs"
 )
 
+// @title           Small Links API
+// @version         1.0
+// @description     Encurtador de URLs em Go com AES-256-GCM, deduplicação por HMAC, alias customizado, TTL/expiração, QR code, analytics de clique e métricas Prometheus.
+// @description     As URLs originais são cifradas em repouso; o IP dos acessos é gravado apenas como HMAC (LGPD).
+// @contact.name    Small Links
+// @license.name    MIT
+// @license.url     https://opensource.org/licenses/MIT
+// @BasePath        /
+// @schemes         http https
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
@@ -57,7 +69,7 @@ func run(logger *slog.Logger) error {
 
 	pg := storage.NewPostgres(db)
 	recorder := analytics.NewRecorder(pg, logger)
-	server := httpapi.New(pg, cipher, recorder, logger)
+	server := httpapi.New(pg, cipher, recorder, logger, cfg.SwaggerEnabled)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
