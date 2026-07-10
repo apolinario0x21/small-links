@@ -1,182 +1,184 @@
 # Small Links
 
-![Go](https://img.shields.io/badge/Go-1.25-blue.svg)
-![Framework](https://img.shields.io/badge/Framework-Gin--v1.10.1-blueviolet.svg)
-[![Framework](https://img.shields.io/badge/Gin-v1.10.1-blueviolet.svg)](https://gin-gonic.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue?logo=docker&logoColor=white)](https://www.docker.com/)
-[![railway](https://img.shields.io/badge/Deploy-Railway-purple.svg)](https://railway.app/)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+> Encurtador de URLs em Go com criptografia autenticada, analytics de clique e observabilidade Prometheus.
 
-Um serviço de encurtador de URLs seguro e de alta performance, construído com Go e o framework Gin. 
-Oferecendo funcionalidades essenciais como criptografia robusta, armazenamento persistente e rastreamento de acessos.
+[![CI](https://github.com/apolinario0x21/small-links/actions/workflows/ci.yml/badge.svg)](https://github.com/apolinario0x21/small-links/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
-## ⚙️ Funcionalidades
+Serviço HTTP que encurta URLs e as devolve por um `short_id`, redirecionando o acesso para o
+destino original. As URLs são cifradas em repouso (AES-256-GCM), acessos repetidos reaproveitam
+o mesmo link (dedup por HMAC), e cada clique alimenta estatísticas agregadas — tudo instrumentado
+com métricas Prometheus. Arquitetura em camadas, dependências injetadas por struct e testes de
+caracterização cobrindo os endpoints.
 
-- 🔐 Criptografia Segura: URLs são criptografadas usando AES-256 antes do armazenamento
-- 💾 Armazenamento Persistente: PostgreSQL com criação automática do schema na inicialização
-- 📊 Análise de Dados: Rastreamento de contagem de acessos e timestamps de criação para cada URL
-- 🚀 Pronto para Produção: Health checks, tratamento de erros e otimizado para deploy no Railway
-- 🌐 Detecção Inteligente de Protocolo: Detecção automática de HTTPS/HTTP baseada no ambiente de deploy
-- 🔄 Suporte CORS: Suporte integrado para Cross-Origin Resource Sharing
+🔗 **Demo:** `https://[SEU-DOMINIO]` _(substituir pelo link de produção do Railway)_
 
+---
 
-## 🚀 Tecnologias utilizadas
-- Go 1.25+
-- Gin Web Framework
-- PostgreSQL (driver lib/pq)
-- Criptografia AES (pacote crypto/aes)
-- Métricas Prometheus (client_golang) e QR code (skip2/go-qrcode)
-- Docker e Docker Compose
-- Railway para deploy (opcional)
+## ✨ Features
 
-## 📦 Instalação e uso local
+- **Encurtamento seguro** — a URL original é cifrada com **AES-256-GCM** (cifragem autenticada,
+  nonce aleatório prefixado) antes de ir para o banco; nunca é gravada em claro.
+- **Deduplicação por HMAC** — a mesma URL devolve o `short_id` existente. O lookup usa
+  **HMAC-SHA256** da URL (o nonce aleatório impede busca pelo ciphertext), ignorando links já
+  expirados.
+- **Alias customizado** — `custom_alias` opcional (`^[a-zA-Z0-9_-]{3,30}$`), com proteção contra
+  colisão e rotas reservadas.
+- **Expiração / TTL** — `expires_in_days` opcional; links expirados respondem **410 Gone**.
+- **QR code** — `GET /qr/{short_id}` devolve o PNG do short link.
+- **Analytics de clique** — cada acesso gera um evento (referrer, user-agent, `ip_hash`) gravado
+  de forma **assíncrona** (canal buffered + worker), sem adicionar latência ao redirect.
+- **Rate limiting por IP** — 10 req/min nos endpoints de criação (HTTP 429), com `ClientIP`
+  confiável atrás de proxy.
+- **Observabilidade** — endpoint `/metrics` no formato Prometheus e stack local de Grafana
+  provisionada.
 
-1. Clone o repositório
-   ```bash
-   git clone https://github.com/apolinario0x21/small-links.git
-   cd small-links
-   ```
-2. Defina as variáveis de ambiente
-   ```bash
-   export ENCRYPTION_KEY=sua_chave_de_criptografia   # exatamente 32 caracteres
-   export DATABASE_URL=postgres://usuario:senha@localhost:5432/smalllinks?sslmode=disable
-   ```
+## 🧰 Stack técnica
 
-3. Instale as dependências
-   ```
-   go mod tidy
-   ```
-4. Rode a aplicação
-   ```
-   go run ./cmd/server
-   ```
+| Camada | Tecnologia |
+|--------|-----------|
+| Linguagem | Go 1.25 |
+| Web framework | Gin |
+| Banco de dados | PostgreSQL (`lib/pq`) |
+| Criptografia | `crypto/aes` (AES-256-GCM) + `crypto/hmac` (HMAC-SHA256) |
+| Rate limiting | `golang.org/x/time/rate` |
+| Métricas | Prometheus (`client_golang`) |
+| QR code | `skip2/go-qrcode` |
+| Empacotamento | Docker + Docker Compose |
+| CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`) |
+| Deploy | Railway |
 
-Alternativamente, suba tudo (aplicação + PostgreSQL) com Docker:
-   ```bash
-   docker compose up --build
-   ```
+## 🏗️ Arquitetura
 
-## 📬 Endpoints disponíveis
+Bootstrap em `cmd/`, regras de negócio isoladas em `internal/`, schema versionado em `migrations/`.
+Handlers recebem dependências via struct (sem globais) e toda query de banco usa `context.Context`
+com timeout.
 
-| Método | Rota      | Descrição                             |
-|--------|-----------|---------------------------------------|
-| POST   | `/api/shorten` | Gera uma URL curta (body JSON `{"url": "https://..."}`, responde 201; se a URL já foi encurtada, responde 200 com `"existing": true` e o `short_id` existente). Campos opcionais: `custom_alias` e `expires_in_days` |
-| GET    | `/shorten?url={url_original}` | Gera uma URL curta (legado, responde 200) |
-| GET    | `/{short_id}` | Redireciona para a URL original (302; 410 Gone se expirado) |
-| GET    | `/stats/{short_id}`  | Estatísticas da URL: `access_count`, `total_clicks`, `clicks_per_day` (últimos 30 dias) e `top_referrers` (top 5) |
-| GET    | `/qr/{short_id}`  | QR code do short link em PNG (`image/png`) |
-| GET    | `/health`  | Verificação de Saúde  |
-| GET    | `/metrics`  | Métricas Prometheus (counters de redirects/shortens/rate-limited e histograma de latência) |
+```
+cmd/server/          → bootstrap: config, injeção de dependências, graceful shutdown, slog
+internal/config/     → leitura e validação das variáveis de ambiente
+internal/crypto/     → AES-256-GCM (cifragem das URLs) + HMAC-SHA256 (dedup e ip_hash)
+internal/storage/    → interface Repository + implementação PostgreSQL (context + timeout)
+internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker goroutine)
+internal/metrics/    → coletores Prometheus (counters + histograma de latência)
+internal/http/       → handlers, middleware (CORS, métricas, rate limiting) e rotas
+migrations/          → SQL versionado, aplicado via go:embed na inicialização
+```
 
-### Campos opcionais do `POST /api/shorten`
+## 📬 API
 
-- `custom_alias` — alias customizado (`^[a-zA-Z0-9_-]{3,30}$`). Colisão com um `short_id`
-  existente ou com uma rota reservada (`health`, `shorten`, `stats`, `api`, `metrics`, `qr`)
-  responde **409 Conflict**. Ausente, o `short_id` é gerado aleatoriamente.
-- `expires_in_days` — inteiro positivo; o link expira após N dias e o redirect passa a
-  responder **410 Gone**. Ausente, o link é permanente.
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **400** para entrada inválida. |
+| `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
+| `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
+| `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5). |
+| `GET`  | `/qr/{short_id}` | QR code do short link em PNG (`image/png`). |
+| `GET`  | `/health` | Health check (`status`, `total_urls`, `timestamp`). |
+| `GET`  | `/metrics` | Métricas no formato Prometheus. |
 
+### Exemplo — criar um short link
 
-## 🔧 Configuração
-
-| Variável | Descrição      | Padrão                             | Obrigatório |
-|--------|-----------|---------------------------------------|-------------|
-| ENCRYPTION_KEY    | `Chave de criptografia AES de 32 caracteres` | — | Sim |
-| DATABASE_URL    | String de conexão PostgreSQL | — | Sim |
-| PORT    | Porta do servidor | 8080 | Não         |
-| GIN_MODE    | Modo do framework Gin `(debug/release)`  | release | Não |
-
-## Considerações de Segurança
-
-- Sempre defina uma ENCRYPTION_KEY personalizada em produção
-- A chave de criptografia deve ter exatamente 32 caracteres
-- URLs são criptografadas antes do armazenamento para proteger a privacidade do usuário 
-- IDs curtos são gerados usando números aleatórios criptograficamente seguros
-- Criação de URLs limitada a 10 requisições por minuto por IP (HTTP 429 ao exceder)
-
-### 🔒 Privacidade (LGPD)
-
-- Endereços IP dos acessos **nunca** são armazenados em claro: apenas o HMAC-SHA256 do IP
-  (`ip_hash`) é gravado na tabela `click_events`, para contagem/deduplicação sem expor o IP.
-- Os eventos de clique guardam também referrer e user-agent, usados apenas para as estatísticas
-  agregadas expostas em `/stats/{short_id}`.
-
-## 📊 Exemplos de Uso
-### Usando cURL
+**Request**
 
 ```bash
-### Criar uma URL encurtada
-curl -X POST "https://seu-dominio.com/api/shorten" \
+curl -X POST "https://[SEU-DOMINIO]/api/shorten" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://www.google.com"}'
-
-### Criar com alias customizado e expiração em 30 dias
-curl -X POST "https://seu-dominio.com/api/shorten" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://www.google.com", "custom_alias": "google", "expires_in_days": 30}'
-
-### Criar uma URL encurtada (endpoint legado)
-curl "https://seu-dominio.com/shorten?url=https://www.google.com"
-
-### Obter estatísticas
-curl "https://seu-dominio.com/stats/aB3xY2"
-
-### Baixar o QR code (PNG)
-curl "https://seu-dominio.com/qr/aB3xY2" --output qr.png
-
-### Verificação de saúde
-curl "https://seu-dominio.com/health"
+  -d '{"url": "https://www.exemplo.com/pagina", "custom_alias": "promo", "expires_in_days": 30}'
 ```
 
-## Usando JavaScript (Fetch API)
+**Response** `201 Created`
 
-```javascript
-// Criar URL encurtada
-const response = await fetch('https://seu-dominio.com/shorten?url=https://www.exemplo.com');
-const data = await response.json();
-console.log('URL encurtada:', data.short_url);
-
-// Obter estatísticas
-const stats = await fetch(`https://seu-dominio.com/stats/${shortId}`);
-const statsData = await stats.json();
-console.log('Contagem de acessos:', statsData.access_count);
+```json
+{
+  "short_id": "promo",
+  "short_url": "https://[SEU-DOMINIO]/promo",
+  "original_url": "https://www.exemplo.com/pagina",
+  "created_at": "2026-07-10T12:00:00Z",
+  "expires_at": "2026-08-09T12:00:00Z"
+}
 ```
-## Componentes Principais
 
-- Camada de Criptografia: Criptografia AES-256-GCM autenticada
-- Engine de Armazenamento: Persistência em PostgreSQL com short_id único indexado
-- Geração de ID: Identificadores de 6 caracteres criptograficamente seguros, ou alias customizado
-- Expiração: TTL opcional por link (`expires_in_days`); links expirados respondem 410 Gone
-- QR code: PNG do short link em `/qr/{short_id}`
-- Analytics: Eventos de clique gravados de forma assíncrona (buffer + worker), sem travar o redirect
-- Monitoramento: Health checks, estatísticas de acesso e métricas Prometheus em `/metrics`
+Se a URL já tiver sido encurtada, a resposta é `200 OK` com o `short_id` existente e
+`"existing": true`.
 
-## 🚢 Deploy
-Railway (Recomendado)
+### Exemplo — estatísticas
 
-- Faça um fork deste repositório
-- Conecte sua conta do Railway ao GitHub
-- Crie um novo projeto a partir do seu fork
-- Adicione um banco PostgreSQL ao projeto (o Railway define `DATABASE_URL` automaticamente)
-- Configure a variável de ambiente ENCRYPTION_KEY
-- Deploy automático no push
+**Request**
 
+```bash
+curl "https://[SEU-DOMINIO]/stats/promo"
+```
 
-## 🔍 Monitoramento
-### Endpoint de Saúde
+**Response** `200 OK`
 
-O endpoint `/health` fornece:
-- Status do serviço
-- Número total de URLs armazenadas
-- Timestamp atual
+```json
+{
+  "short_id": "promo",
+  "original_url": "https://www.exemplo.com/pagina",
+  "created_at": "2026-07-10T12:00:00Z",
+  "access_count": 42,
+  "total_clicks": 42,
+  "clicks_per_day": [
+    { "day": "2026-07-09", "count": 30 },
+    { "day": "2026-07-10", "count": 12 }
+  ],
+  "top_referrers": [
+    { "referrer": "https://news.exemplo.com", "count": 20 }
+  ]
+}
+```
 
-### Endpoint de Métricas
+### Exemplo — QR code
 
-O endpoint `/metrics` expõe métricas no formato Prometheus:
-- `smalllinks_redirects_total` — redirects bem-sucedidos
-- `smalllinks_shortens_total` — URLs encurtadas
-- `smalllinks_rate_limited_total` — requisições barradas pelo rate limiting
-- `smalllinks_http_request_duration_seconds` — histograma de latência por método, rota e status
+```bash
+curl "https://[SEU-DOMINIO]/qr/promo" --output qr.png
+```
+
+## 🔧 Variáveis de ambiente
+
+| Variável | Obrigatória | Padrão | Descrição |
+|----------|-------------|--------|-----------|
+| `ENCRYPTION_KEY` | Sim | — | Chave AES-256, exatamente **32 caracteres**. |
+| `DATABASE_URL` | Sim | — | String de conexão PostgreSQL. |
+| `PORT` | Não | `8080` | Porta do servidor HTTP. |
+| `GIN_MODE` | Não | `release` | Modo do Gin (`debug`/`release`). |
+
+## 🚀 Rodando localmente
+
+A forma mais simples é subir aplicação + PostgreSQL com Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+O serviço fica em `http://localhost:8080` e o schema é criado/migrado automaticamente na
+inicialização.
+
+<details>
+<summary>Rodar sem Docker (Go + Postgres local)</summary>
+
+```bash
+git clone https://github.com/apolinario0x21/small-links.git
+cd small-links
+
+export ENCRYPTION_KEY=uma_chave_de_exatamente_32_chars_
+export DATABASE_URL=postgres://usuario:senha@localhost:5432/smalllinks?sslmode=disable
+
+go run ./cmd/server
+```
+
+</details>
+
+**Testes e verificações:**
+
+```bash
+go test ./...      # suíte completa
+gofmt -l .         # formatação
+go vet ./...       # análise estática
+```
 
 ## 📈 Observabilidade local
 
@@ -235,23 +237,22 @@ docker compose -f docker-compose.observability.yml up -d
 Painéis de latência (p50/p95/p99) só mostram dados **depois** de haver tráfego de redirect —
 gere alguns acessos a short links para populá-los.
 
-## Logs
-A aplicação registra:
+## 🔒 Privacidade (LGPD)
 
-- Informações de inicialização
-- Conexão e migração do banco de dados
-- Condições de erro
-- Avisos de segurança
+- O endereço IP dos acessos **nunca** é armazenado em claro: grava-se apenas o **HMAC-SHA256 do
+  IP** (`ip_hash`) na tabela `click_events`, o suficiente para contagem sem expor o IP.
+- Os eventos de clique guardam também referrer e user-agent, usados exclusivamente nas
+  estatísticas agregadas de `/stats/{short_id}`.
+- As URLs originais são cifradas com AES-256-GCM antes do armazenamento.
 
-## 🤝 Contribuindo
+## 🚢 Deploy (Railway)
 
-- Faça um fork do repositório
-- Crie uma branch de feature (`git checkout -b feature/funcionalidade-incrivel`)
-- Faça commit das suas mudanças (`git commit -m 'Adiciona funcionalidade incrível`')
-- Faça push para a branch (`git push origin feature/funcionalidade-incrivel`)
-- Abra um Pull Request
+1. Faça um fork deste repositório e conecte sua conta do Railway ao GitHub.
+2. Crie um projeto a partir do fork e adicione um banco **PostgreSQL** (o Railway injeta
+   `DATABASE_URL` automaticamente).
+3. Configure a variável `ENCRYPTION_KEY` (32 caracteres).
+4. O deploy roda a cada push; o schema é migrado na inicialização.
 
 ## 📄 Licença
 
-Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
-
+Distribuído sob a licença MIT. Veja [LICENSE](LICENSE) para detalhes.
