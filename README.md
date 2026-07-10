@@ -178,6 +178,47 @@ O endpoint `/metrics` expõe métricas no formato Prometheus:
 - `smalllinks_rate_limited_total` — requisições barradas pelo rate limiting
 - `smalllinks_http_request_duration_seconds` — histograma de latência por método, rota e status
 
+## 📈 Observabilidade local
+
+Ambiente **de desenvolvimento** com Prometheus + Grafana para visualizar as métricas
+expostas em `/metrics`. É **separado do deploy** — não faz parte do `docker-compose.yml`
+principal nem do Railway; serve só para inspecionar o serviço rodando localmente.
+
+Pré-requisito: a stack principal precisa estar no ar, pois o compose de observabilidade se
+conecta à rede `small-links-net` (declarada como `external`):
+
+```bash
+docker compose up -d          # sobe app + banco e cria a rede small-links-net
+```
+
+Subir Prometheus e Grafana:
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+```
+
+- **Grafana**: http://localhost:3000 (login inicial `admin` / `admin`). O datasource
+  Prometheus e o dashboard *Small Links — Overview* já vêm provisionados — nenhum clique
+  de configuração é necessário.
+- **Prometheus**: http://localhost:9090 (faz scrape de `app:8080/metrics` a cada 15s).
+
+Derrubar (com `-v` para também apagar os volumes de dados):
+
+```bash
+docker compose -f docker-compose.observability.yml down       # mantém os dados
+docker compose -f docker-compose.observability.yml down -v    # remove os volumes
+```
+
+> Se a rede `small-links-net` não existir, o compose de observabilidade falha ao subir.
+> Ela é criada automaticamente pelo `docker compose up` da stack principal; caso o Compose
+> a tenha criado com prefixo de projeto (ex.: `small-links_small-links-net`), ajuste o campo
+> `name:` da rede externa no `docker-compose.observability.yml` ou crie uma rede compartilhada
+> com `docker network create small-links-net`.
+
+O dashboard traz: taxa de redirects/s, latência p50/p95/p99 do redirect, requisições por
+status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, e memória residente/goroutines
+do processo.
+
 ## Logs
 A aplicação registra:
 
