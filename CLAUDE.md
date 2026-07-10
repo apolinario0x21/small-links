@@ -6,6 +6,7 @@ Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. De
 
 - Rodar local: `go run ./cmd/server` (exige `ENCRYPTION_KEY` de 32 chars e `DATABASE_URL`)
 - Subir tudo: `docker compose up --build`
+- Observabilidade local (dev): `docker compose -f docker-compose.observability.yml up -d`
 - Testes: `go test ./...`
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Dependências: `go mod tidy`
@@ -90,6 +91,12 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `skip2/go-qrcode`, após confirmar que o short link existe (404 caso contrário).
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
+- **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +
+  Grafana (3000), conectados à rede `small-links-net` (external) da stack principal. Configs em
+  `observability/`: scrape de `app:8080/metrics` (15s) e provisionamento do Grafana (datasource
+  Prometheus com `uid: prometheus`, referenciado pelos painéis do dashboard, e o dashboard
+  *Small Links — Overview*). É ambiente de desenvolvimento — **não** faz parte do deploy; a app
+  e o `docker-compose.yml` principal não foram alterados.
 
 ## Pendências de deploy
 
