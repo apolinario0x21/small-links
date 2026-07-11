@@ -91,7 +91,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "URL bloqueada (maliciosa)",
+                        "description": "URL bloqueada: maliciosa (phishing/malware)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -205,7 +205,7 @@ const docTemplate = `{
                         }
                     },
                     "422": {
-                        "description": "URL bloqueada (maliciosa)",
+                        "description": "URL bloqueada: maliciosa (phishing/malware)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }

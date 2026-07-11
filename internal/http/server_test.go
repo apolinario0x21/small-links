@@ -343,8 +343,9 @@ func TestAPIShortenBlocksMaliciousURL(t *testing.T) {
 		t.Fatalf("status = %d, want 422; body = %s", w.Code, w.Body.String())
 	}
 	body := decodeBody(t, w)
-	if body["error"] != "URL bloqueada: identificada como potencialmente maliciosa" {
-		t.Errorf("error = %q", body["error"])
+	want := "URL bloqueada: identificada como potencialmente maliciosa (phishing/malware)"
+	if body["error"] != want {
+		t.Errorf("error = %q, want %q", body["error"], want)
 	}
 	expectations(t, mock)
 }

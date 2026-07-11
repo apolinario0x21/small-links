@@ -217,7 +217,7 @@ type ShortenRequest struct {
 // @Param        url  query     string  true  "URL original (http/https)"
 // @Success      200  {object}  ShortenResponse
 // @Failure      400  {object}  ErrorResponse
-// @Failure      422  {object}  ErrorResponse  "URL bloqueada (maliciosa)"
+// @Failure      422  {object}  ErrorResponse  "URL bloqueada: maliciosa (phishing/malware)"
 // @Failure      429  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /shorten [get]
@@ -243,7 +243,7 @@ func (s *Server) shortenHandler(c *gin.Context) {
 // @Success      200      {object}  ShortenResponse  "URL já existente (dedup)"
 // @Failure      400      {object}  ErrorResponse    "Body ou URL inválidos"
 // @Failure      409      {object}  ErrorResponse    "Alias já em uso ou reservado"
-// @Failure      422      {object}  ErrorResponse    "URL bloqueada (maliciosa)"
+// @Failure      422      {object}  ErrorResponse    "URL bloqueada: maliciosa (phishing/malware)"
 // @Failure      500      {object}  ErrorResponse
 // @Router       /api/shorten [post]
 func (s *Server) apiShortenHandler(c *gin.Context) {
@@ -281,7 +281,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			metrics.SafeBrowsingErrorsTotal.Inc()
 		case blocked:
 			metrics.SafeBrowsingBlockedTotal.Inc()
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "URL bloqueada: identificada como potencialmente maliciosa"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "URL bloqueada: identificada como potencialmente maliciosa (phishing/malware)"})
 			return
 		}
 	}
