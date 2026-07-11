@@ -13,6 +13,7 @@ import (
 	"github.com/apolinario0x21/small-links/internal/analytics"
 	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
+	"github.com/apolinario0x21/small-links/internal/geo"
 	httpapi "github.com/apolinario0x21/small-links/internal/http"
 	"github.com/apolinario0x21/small-links/internal/safebrowsing"
 	"github.com/apolinario0x21/small-links/internal/storage"
@@ -69,7 +70,18 @@ func run(logger *slog.Logger) error {
 	logger.Info("database migration completed")
 
 	pg := storage.NewPostgres(db)
-	recorder := analytics.NewRecorder(pg, logger)
+
+	// Geolocalização é opcional: sem a base MMDB o app segue sem geo.
+	var geoResolver analytics.GeoResolver
+	if resolver, err := geo.Open(cfg.GeoIPDBPath); err != nil {
+		logger.Warn("base GeoIP indisponível; cliques sem geolocalização", "path", cfg.GeoIPDBPath, "error", err)
+	} else {
+		defer resolver.Close()
+		geoResolver = resolver
+		logger.Info("base GeoIP carregada", "path", cfg.GeoIPDBPath)
+	}
+
+	recorder := analytics.NewRecorder(pg, geoResolver, cipher, logger)
 
 	// Sem chave, a verificação de URL maliciosa fica desabilitada (checker nil).
 	var checker httpapi.URLChecker

@@ -38,6 +38,14 @@ var (
 		Help: "Total de erros/timeouts na verificação Safe Browsing (fail-open).",
 	})
 
+	// ClicksTotal conta cliques por país (ISO alpha-2 ou "unknown") e tipo
+	// de dispositivo. País apenas — cidade jamais entra como label
+	// (cardinalidade e privacidade).
+	ClicksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "smalllinks_clicks_total",
+		Help: "Total de cliques por país e dispositivo.",
+	}, []string{"country", "device"})
+
 	// RequestDuration mede a latência HTTP por método, rota e status.
 	RequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "smalllinks_http_request_duration_seconds",

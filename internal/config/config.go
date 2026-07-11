@@ -21,6 +21,7 @@ type Config struct {
 	GinMode            string
 	SwaggerEnabled     bool
 	SafeBrowsingAPIKey string
+	GeoIPDBPath        string
 }
 
 func Load() (Config, error) {
@@ -34,6 +35,12 @@ func Load() (Config, error) {
 		SwaggerEnabled: os.Getenv("SWAGGER_ENABLED") != "false",
 		// Vazia = verificação de URL maliciosa (Safe Browsing) desabilitada.
 		SafeBrowsingAPIKey: os.Getenv("SAFE_BROWSING_API_KEY"),
+		GeoIPDBPath:        os.Getenv("GEOIP_DB_PATH"),
+	}
+
+	if cfg.GeoIPDBPath == "" {
+		// Caminho onde o Dockerfile deposita a base DB-IP Lite.
+		cfg.GeoIPDBPath = "/app/dbip-country-lite.mmdb"
 	}
 
 	if cfg.EncryptionKey == "" {

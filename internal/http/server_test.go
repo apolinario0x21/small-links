@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/apolinario0x21/small-links/internal/analytics"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
@@ -43,7 +44,7 @@ func encrypt(plainText string) string {
 // assíncrono (coberto em internal/analytics), evitando inserts no sqlmock.
 type noopRecorder struct{}
 
-func (noopRecorder) Record(storage.ClickEvent) {}
+func (noopRecorder) Record(analytics.Click) {}
 
 func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
 	return setupTestFull(t, true, nil)
