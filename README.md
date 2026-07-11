@@ -32,6 +32,9 @@ caracterização cobrindo os endpoints.
   de forma **assíncrona** (canal buffered + worker), sem adicionar latência ao redirect.
 - **Rate limiting por IP** — 10 req/min nos endpoints de criação (HTTP 429), com `ClientIP`
   confiável atrás de proxy.
+- **Verificação de URL maliciosa** — checagem opcional via **Google Safe Browsing** antes de
+  encurtar; URLs sinalizadas são recusadas com **422**. Timeout curto e *fail-open* (falha da
+  API nunca trava o encurtamento).
 - **Observabilidade** — endpoint `/metrics` no formato Prometheus e stack local de Grafana
   provisionada.
 - **Documentação interativa** — OpenAPI/Swagger UI em `/swagger` (desabilitável por env var).
@@ -76,7 +79,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET`  | `/` | Landing page (HTML) com formulário de encurtamento. |
-| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **400** para entrada inválida. |
+| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
 | `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
 | `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
 | `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5). |
@@ -169,6 +172,7 @@ A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para 
 | `PORT` | Não | `8080` | Porta do servidor HTTP. |
 | `GIN_MODE` | Não | `release` | Modo do Gin (`debug`/`release`). |
 | `SWAGGER_ENABLED` | Não | `true` | UI do Swagger em `/swagger`. Defina `false` para desabilitar (ex.: produção). |
+| `SAFE_BROWSING_API_KEY` | Não | — | Chave da Google Safe Browsing API. Vazia desabilita a verificação de URL maliciosa. |
 
 ## 🚀 Rodando localmente
 

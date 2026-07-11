@@ -15,11 +15,12 @@ var (
 )
 
 type Config struct {
-	EncryptionKey  string
-	DatabaseURL    string
-	Port           string
-	GinMode        string
-	SwaggerEnabled bool
+	EncryptionKey      string
+	DatabaseURL        string
+	Port               string
+	GinMode            string
+	SwaggerEnabled     bool
+	SafeBrowsingAPIKey string
 }
 
 func Load() (Config, error) {
@@ -31,6 +32,8 @@ func Load() (Config, error) {
 		// A UI do Swagger fica ligada por padrão; defina SWAGGER_ENABLED=false
 		// para desabilitá-la (ex.: em produção).
 		SwaggerEnabled: os.Getenv("SWAGGER_ENABLED") != "false",
+		// Vazia = verificação de URL maliciosa (Safe Browsing) desabilitada.
+		SafeBrowsingAPIKey: os.Getenv("SAFE_BROWSING_API_KEY"),
 	}
 
 	if cfg.EncryptionKey == "" {

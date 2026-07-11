@@ -22,6 +22,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 | PORT           | Não         | Padrão 8080                                |
 | GIN_MODE       | Não         | debug/release (padrão release)             |
 | SWAGGER_ENABLED| Não         | UI Swagger em /swagger (padrão on; `false` desabilita) |
+| SAFE_BROWSING_API_KEY | Não  | Chave da Google Safe Browsing; vazia desabilita a verificação |
 
 ## Arquitetura
 
@@ -31,6 +32,7 @@ internal/config/     → leitura e validação de env vars
 internal/crypto/     → AES-256-GCM (nonce prefixado) + Hash HMAC-SHA256 p/ dedup e ip_hash
 internal/storage/    → interface Repository + implementação Postgres (context + timeout)
 internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker)
+internal/safebrowsing/→ cliente Google Safe Browsing (Lookup v4) p/ URLs maliciosas
 internal/metrics/    → coletores Prometheus (counters + histograma de latência)
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
 internal/http/static/→ landing page (index.html) embutida via go:embed, servida em GET /
@@ -102,6 +104,15 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   (os handlers continuam usando `gin.H` — comportamento inalterado). Atenção: a versão da lib
   `swaggo/swag` no `go.mod` deve casar com a do CLI que gerou `docs/` (senão o build quebra em
   campos como `LeftDelim`).
+- **Verificação de URL maliciosa (Safe Browsing)**: `internal/safebrowsing` consulta a Google
+  Safe Browsing API (Lookup v4, `threatMatches:find`) com os tipos MALWARE, SOCIAL_ENGINEERING,
+  UNWANTED_SOFTWARE e POTENTIALLY_HARMFUL_APPLICATION, timeout de 2s. A checagem roda no `create`
+  (POST e GET legado) **antes** do dedup e do insert; URL sinalizada recusa com **422**. Chave
+  via `SAFE_BROWSING_API_KEY`: vazia = verificação desabilitada (warn no boot, `checker` nil).
+  **Decisão — fail-open**: erro/timeout da API **permite** a criação (log warn +
+  `smalllinks_safebrowsing_errors_total`), pois disponibilidade do encurtador > checagem; URLs
+  bloqueadas incrementam `smalllinks_safebrowsing_blocked_total`. Injetado como interface
+  `URLChecker` no `Server` (nil-safe, testável com mock).
 - **Landing page (rota `/`)**: `index.html` único, com CSS/JS inline e sem assets externos,
   embutido no binário via `go:embed` (`internal/http/static/`) e servido em `GET /`. **Decisão**:
   embutir mantém o **deploy de binário único** — nenhuma etapa de build de front nem assets a

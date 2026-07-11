@@ -14,6 +14,7 @@ import (
 	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	httpapi "github.com/apolinario0x21/small-links/internal/http"
+	"github.com/apolinario0x21/small-links/internal/safebrowsing"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
 
@@ -69,7 +70,16 @@ func run(logger *slog.Logger) error {
 
 	pg := storage.NewPostgres(db)
 	recorder := analytics.NewRecorder(pg, logger)
-	server := httpapi.New(pg, cipher, recorder, logger, cfg.SwaggerEnabled)
+
+	// Sem chave, a verificação de URL maliciosa fica desabilitada (checker nil).
+	var checker httpapi.URLChecker
+	if cfg.SafeBrowsingAPIKey != "" {
+		checker = safebrowsing.New(cfg.SafeBrowsingAPIKey)
+	} else {
+		logger.Warn("SAFE_BROWSING_API_KEY não definida; verificação de URL maliciosa desabilitada")
+	}
+
+	server := httpapi.New(pg, cipher, recorder, checker, logger, cfg.SwaggerEnabled)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

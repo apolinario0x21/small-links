@@ -90,6 +90,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
                     },
+                    "422": {
+                        "description": "URL bloqueada (maliciosa)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -194,6 +200,12 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "URL bloqueada (maliciosa)",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
