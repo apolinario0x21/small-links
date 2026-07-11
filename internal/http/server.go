@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apolinario0x21/small-links/internal/analytics"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/apolinario0x21/small-links/internal/metrics"
 	"github.com/apolinario0x21/small-links/internal/storage"
@@ -29,7 +30,7 @@ var lettersRune = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01
 // ClickRecorder registra eventos de clique de forma assíncrona. Satisfeito
 // por *analytics.Recorder; um no-op serve para testes e para desabilitar.
 type ClickRecorder interface {
-	Record(e storage.ClickEvent)
+	Record(c analytics.Click)
 }
 
 // URLChecker verifica se uma URL é maliciosa. Satisfeito por
@@ -437,14 +438,15 @@ func (s *Server) redirectHandler(c *gin.Context) {
 	c.Redirect(http.StatusFound, decrypted)
 	metrics.RedirectsTotal.Inc()
 
-	// Registra o clique após responder o 302; o Record é não-bloqueante e
-	// o IP é guardado apenas como HMAC (nunca em claro — ver nota LGPD).
+	// Registra o clique após responder o 302; o Record é não-bloqueante.
+	// O IP segue em claro apenas dentro do processo: o Recorder resolve o
+	// país e gera o ip_hash, sem jamais persistir o IP (ver nota LGPD).
 	if s.recorder != nil {
-		s.recorder.Record(storage.ClickEvent{
+		s.recorder.Record(analytics.Click{
 			ShortID:   shortId,
 			Referrer:  c.Request.Referer(),
 			UserAgent: c.Request.UserAgent(),
-			IPHash:    s.cipher.Hash(c.ClientIP()),
+			IP:        c.ClientIP(),
 		})
 	}
 }
@@ -493,10 +495,12 @@ func (s *Server) statsHandler(c *gin.Context) {
 		"original_url": decrypted,
 		"created_at":   urlData.CreatedAt,
 		"access_count": urlData.AccessCount,
-		// Analytics (item 6).
+		// Analytics (bots excluídos das agregações).
 		"total_clicks":   clickStats.TotalClicks,
 		"clicks_per_day": clickStats.ClicksPerDay,
 		"top_referrers":  clickStats.TopReferrers,
+		"top_countries":  clickStats.TopCountries,
+		"devices":        clickStats.Devices,
 	})
 }
 

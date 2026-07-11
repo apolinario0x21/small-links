@@ -312,6 +312,19 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "http.CountryCountDoc": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 25
+                },
+                "country": {
+                    "type": "string",
+                    "example": "BR"
+                }
+            }
+        },
         "http.DailyClicksDoc": {
             "type": "object",
             "properties": {
@@ -322,6 +335,19 @@ const docTemplate = `{
                 "day": {
                     "type": "string",
                     "example": "2026-07-10"
+                }
+            }
+        },
+        "http.DeviceCountDoc": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 30
+                },
+                "device": {
+                    "type": "string",
+                    "example": "mobile"
                 }
             }
         },
@@ -427,6 +453,12 @@ const docTemplate = `{
                     "type": "string",
                     "example": "2026-07-10T12:00:00Z"
                 },
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.DeviceCountDoc"
+                    }
+                },
                 "original_url": {
                     "type": "string",
                     "example": "https://www.exemplo.com/pagina"
@@ -434,6 +466,12 @@ const docTemplate = `{
                 "short_id": {
                     "type": "string",
                     "example": "promo"
+                },
+                "top_countries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/http.CountryCountDoc"
+                    }
                 },
                 "top_referrers": {
                     "type": "array",

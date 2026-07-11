@@ -28,8 +28,10 @@ caracterização cobrindo os endpoints.
   colisão e rotas reservadas.
 - **Expiração / TTL** — `expires_in_days` opcional; links expirados respondem **410 Gone**.
 - **QR code** — `GET /qr/{short_id}` devolve o PNG do short link.
-- **Analytics de clique** — cada acesso gera um evento (referrer, user-agent, `ip_hash`) gravado
-  de forma **assíncrona** (canal buffered + worker), sem adicionar latência ao redirect.
+- **Analytics de clique** — cada acesso gera um evento (referrer, user-agent, `ip_hash`, país,
+  dispositivo) gravado de forma **assíncrona** (canal buffered + worker), sem adicionar latência
+  ao redirect. Geolocalização por país resolvida localmente (DB-IP Lite) e detecção de
+  dispositivo/bot pelo user-agent; bots ficam fora das estatísticas.
 - **Rate limiting por IP** — 10 req/min nos endpoints de criação (HTTP 429), com `ClientIP`
   confiável atrás de proxy.
 - **Verificação de URL maliciosa** — checagem opcional via **Google Safe Browsing** antes de
@@ -82,7 +84,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 | `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
 | `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
 | `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
-| `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5). |
+| `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5), `top_countries` (top 5) e `devices` — bots excluídos. |
 | `GET`  | `/qr/{short_id}` | QR code do short link em PNG (`image/png`). |
 | `GET`  | `/health` | Health check (`status`, `total_urls`, `timestamp`). |
 | `GET`  | `/metrics` | Métricas no formato Prometheus. |
@@ -173,6 +175,7 @@ A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para 
 | `GIN_MODE` | Não | `release` | Modo do Gin (`debug`/`release`). |
 | `SWAGGER_ENABLED` | Não | `true` | UI do Swagger em `/swagger`. Defina `false` para desabilitar (ex.: produção). |
 | `SAFE_BROWSING_API_KEY` | Não | — | Chave da Google Safe Browsing API. Vazia desabilita a verificação de URL maliciosa. |
+| `GEOIP_DB_PATH` | Não | `/app/dbip-country-lite.mmdb` | Caminho da base MMDB (DB-IP Lite) para geolocalização por país. Ausente/inválida: app roda sem geo. |
 
 ## 🚀 Rodando localmente
 
@@ -285,9 +288,15 @@ gere alguns acessos a short links para populá-los.
 
 - O endereço IP dos acessos **nunca** é armazenado em claro: grava-se apenas o **HMAC-SHA256 do
   IP** (`ip_hash`) na tabela `click_events`, o suficiente para contagem sem expor o IP.
-- Os eventos de clique guardam também referrer e user-agent, usados exclusivamente nas
-  estatísticas agregadas de `/stats/{short_id}`.
+- **Geolocalização resolvida localmente no instante do clique, antes do hash; apenas o código do
+  país é armazenado; o IP nunca sai do processo nem é persistido.** A resolução usa uma base
+  MMDB local (DB-IP Lite) — nenhuma API externa recebe o IP.
+- Os eventos de clique guardam também referrer, user-agent e a classificação de dispositivo,
+  usados exclusivamente nas estatísticas agregadas de `/stats/{short_id}`.
 - As URLs originais são cifradas com AES-256-GCM antes do armazenamento.
+
+> Este produto inclui dados IP→país de [DB-IP](https://db-ip.com) (IP Geolocation by DB-IP),
+> licenciados sob [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ## 🚢 Deploy
 

@@ -155,9 +155,9 @@ func (p *Postgres) InsertClickEvent(ctx context.Context, e ClickEvent) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))`
-	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash)
+	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash, country, device, os, is_bot)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8)`
+	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash, e.Country, e.Device, e.OS, e.IsBot)
 	return err
 }
 
@@ -179,10 +179,12 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 	stats := ClickStats{
 		ClicksPerDay: []DailyClicks{},
 		TopReferrers: []ReferrerCount{},
+		TopCountries: []CountryCount{},
+		Devices:      []DeviceCount{},
 	}
 
 	err := p.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM click_events WHERE short_id = $1`, shortID,
+		`SELECT COUNT(*) FROM click_events WHERE short_id = $1 AND NOT is_bot`, shortID,
 	).Scan(&stats.TotalClicks)
 	if err != nil {
 		return ClickStats{}, err
@@ -191,7 +193,7 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 	dayRows, err := p.db.QueryContext(ctx,
 		`SELECT date_trunc('day', occurred_at) AS day, COUNT(*)
 		 FROM click_events
-		 WHERE short_id = $1 AND occurred_at >= now() - interval '30 days'
+		 WHERE short_id = $1 AND NOT is_bot AND occurred_at >= now() - interval '30 days'
 		 GROUP BY day
 		 ORDER BY day`, shortID)
 	if err != nil {
@@ -217,7 +219,7 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 	refRows, err := p.db.QueryContext(ctx,
 		`SELECT referrer, COUNT(*) AS n
 		 FROM click_events
-		 WHERE short_id = $1 AND referrer IS NOT NULL
+		 WHERE short_id = $1 AND NOT is_bot AND referrer IS NOT NULL
 		 GROUP BY referrer
 		 ORDER BY n DESC, referrer
 		 LIMIT 5`, shortID)
@@ -234,6 +236,51 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 		stats.TopReferrers = append(stats.TopReferrers, ref)
 	}
 	if err := refRows.Err(); err != nil {
+		return ClickStats{}, err
+	}
+
+	countryRows, err := p.db.QueryContext(ctx,
+		`SELECT country, COUNT(*) AS n
+		 FROM click_events
+		 WHERE short_id = $1 AND NOT is_bot AND country IS NOT NULL
+		 GROUP BY country
+		 ORDER BY n DESC, country
+		 LIMIT 5`, shortID)
+	if err != nil {
+		return ClickStats{}, err
+	}
+	defer countryRows.Close()
+
+	for countryRows.Next() {
+		var cc CountryCount
+		if err := countryRows.Scan(&cc.Country, &cc.Count); err != nil {
+			return ClickStats{}, err
+		}
+		stats.TopCountries = append(stats.TopCountries, cc)
+	}
+	if err := countryRows.Err(); err != nil {
+		return ClickStats{}, err
+	}
+
+	deviceRows, err := p.db.QueryContext(ctx,
+		`SELECT device, COUNT(*) AS n
+		 FROM click_events
+		 WHERE short_id = $1 AND NOT is_bot AND device IS NOT NULL
+		 GROUP BY device
+		 ORDER BY n DESC, device`, shortID)
+	if err != nil {
+		return ClickStats{}, err
+	}
+	defer deviceRows.Close()
+
+	for deviceRows.Next() {
+		var dc DeviceCount
+		if err := deviceRows.Scan(&dc.Device, &dc.Count); err != nil {
+			return ClickStats{}, err
+		}
+		stats.Devices = append(stats.Devices, dc)
+	}
+	if err := deviceRows.Err(); err != nil {
 		return ClickStats{}, err
 	}
 

@@ -31,7 +31,20 @@ type ReferrerCountDoc struct {
 	Count    int    `json:"count" example:"20"`
 }
 
-// StatsResponse é a resposta do endpoint de estatísticas.
+// CountryCountDoc agrega cliques por país (documentação).
+type CountryCountDoc struct {
+	Country string `json:"country" example:"BR"`
+	Count   int    `json:"count" example:"25"`
+}
+
+// DeviceCountDoc agrega cliques por dispositivo (documentação).
+type DeviceCountDoc struct {
+	Device string `json:"device" example:"mobile"`
+	Count  int    `json:"count" example:"30"`
+}
+
+// StatsResponse é a resposta do endpoint de estatísticas. As agregações
+// de cliques excluem bots.
 type StatsResponse struct {
 	ShortID      string             `json:"short_id" example:"promo"`
 	OriginalURL  string             `json:"original_url" example:"https://www.exemplo.com/pagina"`
@@ -40,6 +53,8 @@ type StatsResponse struct {
 	TotalClicks  int                `json:"total_clicks" example:"42"`
 	ClicksPerDay []DailyClicksDoc   `json:"clicks_per_day"`
 	TopReferrers []ReferrerCountDoc `json:"top_referrers"`
+	TopCountries []CountryCountDoc  `json:"top_countries"`
+	Devices      []DeviceCountDoc   `json:"devices"`
 }
 
 // HealthResponse é a resposta do health check.

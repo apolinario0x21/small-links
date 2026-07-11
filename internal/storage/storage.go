@@ -31,11 +31,17 @@ type URLData struct {
 
 // ClickEvent é um evento de acesso a um short link, gravado de forma
 // assíncrona. Referrer e UserAgent podem ser vazios; IPHash é o HMAC do IP.
+// Country (ISO 3166-1 alpha-2), Device, OS e IsBot são enriquecidos pelo
+// Recorder no momento do clique; campos vazios viram NULL.
 type ClickEvent struct {
 	ShortID   string
 	Referrer  string
 	UserAgent string
 	IPHash    string
+	Country   string
+	Device    string
+	OS        string
+	IsBot     bool
 }
 
 // DailyClicks agrega cliques por dia (Day no formato ISO YYYY-MM-DD).
@@ -50,12 +56,27 @@ type ReferrerCount struct {
 	Count    int    `json:"count"`
 }
 
+// CountryCount agrega cliques por país (ISO 3166-1 alpha-2).
+type CountryCount struct {
+	Country string `json:"country"`
+	Count   int    `json:"count"`
+}
+
+// DeviceCount agrega cliques por tipo de dispositivo.
+type DeviceCount struct {
+	Device string `json:"device"`
+	Count  int    `json:"count"`
+}
+
 // ClickStats reúne as métricas de acesso expostas no endpoint de stats.
 // As fatias são sempre não-nulas para serializar como [] e não null.
+// Todas as agregações excluem cliques de bots (is_bot = true).
 type ClickStats struct {
 	TotalClicks  int             `json:"total_clicks"`
 	ClicksPerDay []DailyClicks   `json:"clicks_per_day"`
 	TopReferrers []ReferrerCount `json:"top_referrers"`
+	TopCountries []CountryCount  `json:"top_countries"`
+	Devices      []DeviceCount   `json:"devices"`
 }
 
 type Repository interface {
