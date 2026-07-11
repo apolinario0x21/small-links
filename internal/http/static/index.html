@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>small-links</title>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --panel: #11161f;
+      --border: #232b39;
+      --fg: #d7dee8;
+      --muted: #7d8799;
+      --accent: #4ade80;
+      --accent-dim: #2f9e5f;
+      --danger: #f87171;
+      --radius: 10px;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--mono);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1.25rem;
+    }
+    main {
+      width: 100%;
+      max-width: 620px;
+      margin: auto;
+    }
+    header h1 {
+      font-size: 1.9rem;
+      margin: 0;
+      letter-spacing: -0.5px;
+    }
+    header h1 .prompt { color: var(--accent); }
+    header p { color: var(--muted); margin: 0.35rem 0 1.5rem; font-size: 0.95rem; }
+    form {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--fg);
+      font-family: var(--mono);
+      font-size: 1rem;
+      padding: 0.7rem 0.8rem;
+    }
+    input:focus { outline: none; border-color: var(--accent-dim); }
+    details { margin-top: 0.9rem; }
+    details summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 0.85rem;
+      user-select: none;
+    }
+    details summary:hover { color: var(--fg); }
+    .opts { display: flex; gap: 0.8rem; margin-top: 0.8rem; flex-wrap: wrap; }
+    .opts > div { flex: 1 1 180px; }
+    button {
+      cursor: pointer;
+      font-family: var(--mono);
+      font-weight: 600;
+      border-radius: 8px;
+      border: 1px solid transparent;
+    }
+    .submit {
+      width: 100%;
+      margin-top: 1rem;
+      background: var(--accent);
+      color: #06210f;
+      font-size: 1rem;
+      padding: 0.75rem;
+    }
+    .submit:hover { background: #62e394; }
+    .submit:disabled { opacity: 0.6; cursor: progress; }
+    .result, .error {
+      margin-top: 1.1rem;
+      border-radius: var(--radius);
+      padding: 1rem;
+      border: 1px solid var(--border);
+    }
+    .result { background: var(--panel); }
+    .error { background: #2a1416; border-color: #5b2327; color: var(--danger); font-size: 0.92rem; }
+    [hidden] { display: none !important; }
+    .existing {
+      font-size: 0.85rem;
+      color: var(--accent);
+      margin: 0 0 0.7rem;
+    }
+    .short-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .short-row a {
+      color: var(--accent);
+      font-size: 1.05rem;
+      word-break: break-all;
+      text-decoration: none;
+      flex: 1 1 auto;
+    }
+    .short-row a:hover { text-decoration: underline; }
+    .copy {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-size: 0.8rem;
+      padding: 0.4rem 0.7rem;
+    }
+    .copy:hover { border-color: var(--accent-dim); }
+    .dest { color: var(--muted); font-size: 0.8rem; margin: 0.6rem 0 0; word-break: break-all; }
+    .dest b { color: var(--fg); font-weight: 400; }
+    .qr {
+      margin-top: 1rem;
+      background: #fff;
+      border-radius: 8px;
+      padding: 0.5rem;
+      width: 168px;
+      height: 168px;
+    }
+    footer {
+      max-width: 620px;
+      margin: 2rem auto 0;
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--accent); }
+    footer .lgpd { margin-top: 0.5rem; opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1><span class="prompt">&gt;</span> small-links</h1>
+      <p>Encurtador de URLs em Go — cifragem AES-256-GCM, QR code e analytics de clique.</p>
+    </header>
+
+    <form id="form" autocomplete="off">
+      <label for="url">URL para encurtar</label>
+      <input id="url" name="url" type="url" placeholder="https://exemplo.com/pagina-bem-longa" required>
+
+      <details>
+        <summary>opções avançadas</summary>
+        <div class="opts">
+          <div>
+            <label for="alias">alias personalizado</label>
+            <input id="alias" name="alias" type="text" placeholder="ex.: promo" pattern="[a-zA-Z0-9_-]{3,30}">
+          </div>
+          <div>
+            <label for="expires">expira em (dias)</label>
+            <input id="expires" name="expires" type="number" min="1" placeholder="ex.: 30">
+          </div>
+        </div>
+      </details>
+
+      <button class="submit" type="submit">encurtar</button>
+    </form>
+
+    <section class="error" id="error" hidden></section>
+
+    <section class="result" id="result" hidden>
+      <p class="existing" id="existing" hidden>URL já encurtada anteriormente — reaproveitando link.</p>
+      <div class="short-row">
+        <a id="shortUrl" target="_blank" rel="noopener noreferrer"></a>
+        <button type="button" class="copy" id="copy">copiar</button>
+      </div>
+      <p class="dest">destino: <b id="dest"></b></p>
+      <img class="qr" id="qr" alt="QR code do link encurtado" width="168" height="168">
+    </section>
+  </main>
+
+  <footer>
+    <a href="/swagger/index.html">API (Swagger)</a>
+    &nbsp;·&nbsp;
+    <a href="https://github.com/apolinario0x21/small-links" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <div class="lgpd">IPs de acesso são armazenados apenas como hash (HMAC) — nunca em claro.</div>
+  </footer>
+
+  <script>
+    (function () {
+      var form = document.getElementById("form");
+      var urlInput = document.getElementById("url");
+      var aliasInput = document.getElementById("alias");
+      var expiresInput = document.getElementById("expires");
+      var submitBtn = form.querySelector(".submit");
+
+      var errorBox = document.getElementById("error");
+      var result = document.getElementById("result");
+      var existing = document.getElementById("existing");
+      var shortUrl = document.getElementById("shortUrl");
+      var dest = document.getElementById("dest");
+      var qr = document.getElementById("qr");
+      var copyBtn = document.getElementById("copy");
+
+      function showError(status) {
+        var msg;
+        switch (status) {
+          case 400: msg = "URL ou alias inválido. Confira os campos e tente novamente."; break;
+          case 409: msg = "Esse alias já está em uso. Escolha outro."; break;
+          case 429: msg = "Muitas requisições em pouco tempo. Aguarde cerca de 1 minuto e tente de novo."; break;
+          default:  msg = "Não foi possível encurtar agora. Tente novamente em instantes.";
+        }
+        // textContent (nunca innerHTML) evita XSS refletido.
+        errorBox.textContent = msg;
+        errorBox.hidden = false;
+        result.hidden = true;
+      }
+
+      function showResult(data) {
+        errorBox.hidden = true;
+        existing.hidden = data.existing !== true;
+
+        // Todos os campos abaixo são preenchidos via textContent/atributos,
+        // nunca innerHTML — original_url pode conter conteúdo hostil.
+        shortUrl.textContent = data.short_url;
+        shortUrl.setAttribute("href", data.short_url);
+        dest.textContent = data.original_url || "";
+
+        if (data.short_id) {
+          qr.setAttribute("src", "/qr/" + encodeURIComponent(data.short_id));
+          qr.hidden = false;
+        } else {
+          qr.removeAttribute("src");
+          qr.hidden = true;
+        }
+
+        result.hidden = false;
+      }
+
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        return new Promise(function (resolve, reject) {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.setAttribute("readonly", "");
+          ta.style.position = "absolute";
+          ta.style.left = "-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy") ? resolve() : reject();
+          } catch (e) { reject(e); }
+          document.body.removeChild(ta);
+        });
+      }
+
+      copyBtn.addEventListener("click", function () {
+        copyText(shortUrl.textContent).then(function () {
+          var prev = copyBtn.textContent;
+          copyBtn.textContent = "copiado!";
+          setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        }).catch(function () {
+          copyBtn.textContent = "falhou";
+          setTimeout(function () { copyBtn.textContent = "copiar"; }, 1500);
+        });
+      });
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+
+        var body = { url: urlInput.value.trim() };
+        var alias = aliasInput.value.trim();
+        var expires = expiresInput.value.trim();
+        if (alias) body.custom_alias = alias;
+        if (expires) body.expires_in_days = parseInt(expires, 10);
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "encurtando...";
+
+        fetch("/api/shorten", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        }).then(function (resp) {
+          if (!resp.ok) { showError(resp.status); return null; }
+          return resp.json();
+        }).then(function (data) {
+          if (data) showResult(data);
+        }).catch(function () {
+          showError(0);
+        }).finally(function () {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "encurtar";
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

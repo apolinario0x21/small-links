@@ -33,6 +33,7 @@ internal/storage/    → interface Repository + implementação Postgres (contex
 internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker)
 internal/metrics/    → coletores Prometheus (counters + histograma de latência)
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
+internal/http/static/→ landing page (index.html) embutida via go:embed, servida em GET /
 docs/                → OpenAPI gerado pelo swag (docs.go/swagger.json/yaml); importado no main
 migrations/          → SQL versionado, aplicado via go:embed na inicialização
 ```
@@ -101,6 +102,13 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   (os handlers continuam usando `gin.H` — comportamento inalterado). Atenção: a versão da lib
   `swaggo/swag` no `go.mod` deve casar com a do CLI que gerou `docs/` (senão o build quebra em
   campos como `LeftDelim`).
+- **Landing page (rota `/`)**: `index.html` único, com CSS/JS inline e sem assets externos,
+  embutido no binário via `go:embed` (`internal/http/static/`) e servido em `GET /`. **Decisão**:
+  embutir mantém o **deploy de binário único** — nenhuma etapa de build de front nem assets a
+  hospedar. A rota `/` (estática) coexiste com o catch-all `/:shortId` sem conflito; o
+  `metricsMiddleware` a rotula como `route="/"`. O front chama `POST /api/shorten` via `fetch` e
+  preenche o resultado só com `textContent`/atributos (nunca `innerHTML`) para evitar XSS
+  refletido via `original_url`.
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +
@@ -149,7 +157,6 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
      `TRUNCATE` a rodar — ver seção **Deploy**.
 6. ~~**Features**: eventos de clique + registro assíncrono, stats expandido, `/metrics`
    Prometheus, alias customizado, expiração/TTL, QR code~~ ✅
-7. **Landing page na rota `/`** — **próxima prioridade acordada**. Hoje `GET /` retorna 404
-   (só existe o catch-all `/:shortId`, que exige um segmento). Servir uma página inicial
-   (formulário de encurtar + branding), sem colidir com o roteamento de short_id.
+7. ~~**Landing page na rota `/`**: página inicial (formulário + branding) embutida via
+   `go:embed`, sem colidir com o catch-all `/:shortId`~~ ✅
 8. **Extras**: cache Redis para redirects quentes, frontend em Next.js.

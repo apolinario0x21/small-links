@@ -64,6 +64,11 @@ func (s *Server) Router() *gin.Engine {
 
 	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
 
+	// Landing page na raiz. Não conflita com o catch-all /:shortId (rota
+	// estática "/" vs. param de um segmento) nem com os aliases (o regex de
+	// alias exige 3+ chars, então "/" jamais seria um alias válido).
+	router.GET("/", s.landingHandler)
+
 	router.GET("/health", s.healthHandler)
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.GET("/shorten", createLimiter, s.shortenHandler)

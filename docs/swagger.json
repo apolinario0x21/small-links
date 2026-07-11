@@ -18,6 +18,26 @@
     },
     "basePath": "/",
     "paths": {
+        "/": {
+            "get": {
+                "description": "Página inicial com formulário de encurtamento.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "landing"
+                ],
+                "summary": "Landing page",
+                "responses": {
+                    "200": {
+                        "description": "HTML da landing page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/api/shorten": {
             "post": {
                 "description": "Cria um short link. Campos opcionais: custom_alias e expires_in_days. Se a URL já existir, responde 200 com \"existing\": true.",

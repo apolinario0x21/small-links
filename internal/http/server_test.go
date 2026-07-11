@@ -531,6 +531,39 @@ func TestShortenRateLimit(t *testing.T) {
 	expectations(t, mock)
 }
 
+// --- GET / (landing page) ---
+
+func TestLandingPage(t *testing.T) {
+	router, mock := setupTest(t)
+
+	w := doRequest(router, http.MethodGet, "/")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	if !strings.Contains(w.Body.String(), "small-links") {
+		t.Error("corpo não contém o título esperado")
+	}
+	expectations(t, mock)
+}
+
+// O metricsMiddleware deve rotular a landing como route="/" (rota registrada),
+// não cair no bucket "unmatched".
+func TestLandingMetricsRouteLabel(t *testing.T) {
+	router, mock := setupTest(t)
+
+	doRequest(router, http.MethodGet, "/")
+	w := doRequest(router, http.MethodGet, "/metrics")
+
+	if !strings.Contains(w.Body.String(), `route="/"`) {
+		t.Error("métrica de latência não registrou route=\"/\" para a landing")
+	}
+	expectations(t, mock)
+}
+
 // --- GET /swagger ---
 
 func TestSwaggerUIServedWhenEnabled(t *testing.T) {

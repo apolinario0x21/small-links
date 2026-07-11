@@ -107,6 +107,19 @@ info:
   title: Small Links API
   version: "1.0"
 paths:
+  /:
+    get:
+      description: Página inicial com formulário de encurtamento.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML da landing page
+          schema:
+            type: string
+      summary: Landing page
+      tags:
+      - landing
   /{shortId}:
     get:
       description: Responde 302 para a URL original. 404 se inexistente, 410 se expirado.
