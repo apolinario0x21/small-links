@@ -35,6 +35,8 @@ caracterização cobrindo os endpoints.
 - **Observabilidade** — endpoint `/metrics` no formato Prometheus e stack local de Grafana
   provisionada.
 - **Documentação interativa** — OpenAPI/Swagger UI em `/swagger` (desabilitável por env var).
+- **Landing page** — página inicial em `/` (HTML embutido no binário via `go:embed`) com
+  formulário de encurtamento, cópia do link, QR code e mensagens de erro amigáveis.
 
 ## 🧰 Stack técnica
 
@@ -73,6 +75,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
+| `GET`  | `/` | Landing page (HTML) com formulário de encurtamento. |
 | `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **400** para entrada inválida. |
 | `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
 | `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
@@ -176,7 +179,8 @@ docker compose up --build
 ```
 
 O serviço fica em `http://localhost:8080` e o schema é criado/migrado automaticamente na
-inicialização.
+inicialização. Abra `http://localhost:8080/` no navegador para a **landing page** (ou use a de
+produção em <https://small-links.onrender.com>).
 
 <details>
 <summary>Rodar sem Docker (Go + Postgres local)</summary>
