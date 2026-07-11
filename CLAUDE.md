@@ -112,7 +112,11 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   **Decisão — fail-open**: erro/timeout da API **permite** a criação (log warn +
   `smalllinks_safebrowsing_errors_total`), pois disponibilidade do encurtador > checagem; URLs
   bloqueadas incrementam `smalllinks_safebrowsing_blocked_total`. Injetado como interface
-  `URLChecker` no `Server` (nil-safe, testável com mock).
+  `URLChecker` no `Server` (nil-safe, testável com mock). O bloqueio responde **422** com
+  mensagem específica citando phishing/malware; a landing trata o 422 com texto próprio, final
+  (sem sugerir nova tentativa). **Lição**: mensagens de erro devem distinguir **falha temporária**
+  (5xx/rede → "tente de novo") de **bloqueio permanente e deliberado** (422 → "não pode ser
+  encurtado") — reusar a genérica de retry para um bloqueio engana o usuário.
 - **Landing page (rota `/`)**: `index.html` único, com CSS/JS inline e sem assets externos,
   embutido no binário via `go:embed` (`internal/http/static/`) e servido em `GET /`. **Decisão**:
   embutir mantém o **deploy de binário único** — nenhuma etapa de build de front nem assets a
