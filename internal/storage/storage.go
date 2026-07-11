@@ -56,12 +56,27 @@ type ReferrerCount struct {
 	Count    int    `json:"count"`
 }
 
+// CountryCount agrega cliques por país (ISO 3166-1 alpha-2).
+type CountryCount struct {
+	Country string `json:"country"`
+	Count   int    `json:"count"`
+}
+
+// DeviceCount agrega cliques por tipo de dispositivo.
+type DeviceCount struct {
+	Device string `json:"device"`
+	Count  int    `json:"count"`
+}
+
 // ClickStats reúne as métricas de acesso expostas no endpoint de stats.
 // As fatias são sempre não-nulas para serializar como [] e não null.
+// Todas as agregações excluem cliques de bots (is_bot = true).
 type ClickStats struct {
 	TotalClicks  int             `json:"total_clicks"`
 	ClicksPerDay []DailyClicks   `json:"clicks_per_day"`
 	TopReferrers []ReferrerCount `json:"top_referrers"`
+	TopCountries []CountryCount  `json:"top_countries"`
+	Devices      []DeviceCount   `json:"devices"`
 }
 
 type Repository interface {

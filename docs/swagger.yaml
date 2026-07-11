@@ -1,5 +1,14 @@
 basePath: /
 definitions:
+  http.CountryCountDoc:
+    properties:
+      count:
+        example: 25
+        type: integer
+      country:
+        example: BR
+        type: string
+    type: object
   http.DailyClicksDoc:
     properties:
       count:
@@ -7,6 +16,15 @@ definitions:
         type: integer
       day:
         example: "2026-07-10"
+        type: string
+    type: object
+  http.DeviceCountDoc:
+    properties:
+      count:
+        example: 30
+        type: integer
+      device:
+        example: mobile
         type: string
     type: object
   http.ErrorResponse:
@@ -81,12 +99,20 @@ definitions:
       created_at:
         example: "2026-07-10T12:00:00Z"
         type: string
+      devices:
+        items:
+          $ref: '#/definitions/http.DeviceCountDoc'
+        type: array
       original_url:
         example: https://www.exemplo.com/pagina
         type: string
       short_id:
         example: promo
         type: string
+      top_countries:
+        items:
+          $ref: '#/definitions/http.CountryCountDoc'
+        type: array
       top_referrers:
         items:
           $ref: '#/definitions/http.ReferrerCountDoc'

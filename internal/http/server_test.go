@@ -860,10 +860,12 @@ func TestRedirectUpdateFailureStillRedirects(t *testing.T) {
 
 // --- GET /stats/:shortId ---
 
-// expectClickStats registra as três queries de ClickStats na ordem em que
-// o repositório as executa: total, cliques/dia e top referrers.
-func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []storage.DailyClicks, refs []storage.ReferrerCount) {
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM click_events WHERE short_id = \$1`).
+// expectClickStats registra as cinco queries de ClickStats na ordem em que
+// o repositório as executa: total, cliques/dia, top referrers, top países e
+// dispositivos. Os regex exigem o filtro NOT is_bot — bots ficam fora de
+// todas as agregações.
+func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []storage.DailyClicks, refs []storage.ReferrerCount, countries []storage.CountryCount, devices []storage.DeviceCount) {
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM click_events WHERE short_id = \$1 AND NOT is_bot`).
 		WithArgs(shortID).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(total))
 
@@ -872,7 +874,7 @@ func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []st
 		parsed, _ := time.Parse("2006-01-02", d.Day)
 		dayRows.AddRow(parsed, d.Count)
 	}
-	mock.ExpectQuery(`SELECT date_trunc\('day', occurred_at\) AS day, COUNT\(\*\)`).
+	mock.ExpectQuery(`SELECT date_trunc\('day', occurred_at\) AS day, COUNT\(\*\)[\s\S]*NOT is_bot`).
 		WithArgs(shortID).
 		WillReturnRows(dayRows)
 
@@ -880,9 +882,25 @@ func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []st
 	for _, r := range refs {
 		refRows.AddRow(r.Referrer, r.Count)
 	}
-	mock.ExpectQuery(`SELECT referrer, COUNT\(\*\) AS n`).
+	mock.ExpectQuery(`SELECT referrer, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
 		WithArgs(shortID).
 		WillReturnRows(refRows)
+
+	countryRows := sqlmock.NewRows([]string{"country", "n"})
+	for _, c := range countries {
+		countryRows.AddRow(c.Country, c.Count)
+	}
+	mock.ExpectQuery(`SELECT country, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
+		WithArgs(shortID).
+		WillReturnRows(countryRows)
+
+	deviceRows := sqlmock.NewRows([]string{"device", "n"})
+	for _, d := range devices {
+		deviceRows.AddRow(d.Device, d.Count)
+	}
+	mock.ExpectQuery(`SELECT device, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
+		WithArgs(shortID).
+		WillReturnRows(deviceRows)
 }
 
 func TestStatsSuccess(t *testing.T) {
@@ -898,6 +916,8 @@ func TestStatsSuccess(t *testing.T) {
 		42,
 		[]storage.DailyClicks{{Day: "2026-01-01", Count: 30}, {Day: "2026-01-02", Count: 12}},
 		[]storage.ReferrerCount{{Referrer: "https://news.example", Count: 20}, {Referrer: "https://x.example", Count: 8}},
+		[]storage.CountryCount{{Country: "BR", Count: 25}, {Country: "US", Count: 10}},
+		[]storage.DeviceCount{{Device: "mobile", Count: 30}, {Device: "desktop", Count: 12}},
 	)
 
 	w := doRequest(router, http.MethodGet, "/stats/abc123")
@@ -939,6 +959,24 @@ func TestStatsSuccess(t *testing.T) {
 	if topRef["referrer"] != "https://news.example" || topRef["count"] != float64(20) {
 		t.Errorf("top_referrers[0] = %v, want {news.example, 20}", topRef)
 	}
+
+	// Novos campos de geo/dispositivo.
+	countries, ok := body["top_countries"].([]any)
+	if !ok || len(countries) != 2 {
+		t.Fatalf("top_countries = %v, want 2 entradas", body["top_countries"])
+	}
+	topCountry := countries[0].(map[string]any)
+	if topCountry["country"] != "BR" || topCountry["count"] != float64(25) {
+		t.Errorf("top_countries[0] = %v, want {BR, 25}", topCountry)
+	}
+	devices, ok := body["devices"].([]any)
+	if !ok || len(devices) != 2 {
+		t.Fatalf("devices = %v, want 2 entradas", body["devices"])
+	}
+	topDevice := devices[0].(map[string]any)
+	if topDevice["device"] != "mobile" || topDevice["count"] != float64(30) {
+		t.Errorf("devices[0] = %v, want {mobile, 30}", topDevice)
+	}
 	expectations(t, mock)
 }
 
@@ -950,7 +988,7 @@ func TestStatsEmptyAnalytics(t *testing.T) {
 		WithArgs("abc123").
 		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "created_at", "access_count"}).
 			AddRow("abc123", encrypted, time.Now(), 0))
-	expectClickStats(mock, "abc123", 0, nil, nil)
+	expectClickStats(mock, "abc123", 0, nil, nil, nil, nil)
 
 	w := doRequest(router, http.MethodGet, "/stats/abc123")
 

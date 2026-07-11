@@ -495,10 +495,12 @@ func (s *Server) statsHandler(c *gin.Context) {
 		"original_url": decrypted,
 		"created_at":   urlData.CreatedAt,
 		"access_count": urlData.AccessCount,
-		// Analytics (item 6).
+		// Analytics (bots excluídos das agregações).
 		"total_clicks":   clickStats.TotalClicks,
 		"clicks_per_day": clickStats.ClicksPerDay,
 		"top_referrers":  clickStats.TopReferrers,
+		"top_countries":  clickStats.TopCountries,
+		"devices":        clickStats.Devices,
 	})
 }
 
