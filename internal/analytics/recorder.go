@@ -104,7 +104,7 @@ func (r *Recorder) enrich(c Click) storage.ClickEvent {
 	if r.hasher != nil && c.IP != "" {
 		e.IPHash = r.hasher.Hash(c.IP)
 	}
-	e.Device, e.OS, e.IsBot = parseDevice(c.UserAgent)
+	e.Device, e.OS, e.IsBot = ParseDevice(c.UserAgent)
 
 	country, device := e.Country, e.Device
 	if country == "" {

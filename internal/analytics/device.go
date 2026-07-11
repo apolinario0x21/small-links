@@ -4,9 +4,9 @@ import "github.com/mileusna/useragent"
 
 const maxFieldLen = 20 // limite das colunas device/os (VARCHAR(20))
 
-// parseDevice classifica o user-agent em device (mobile/tablet/desktop/bot),
+// ParseDevice classifica o user-agent em device (mobile/tablet/desktop/bot),
 // sistema operacional e flag de bot. Campos vazios viram NULL no banco.
-func parseDevice(uaString string) (device, os string, isBot bool) {
+func ParseDevice(uaString string) (device, os string, isBot bool) {
 	if uaString == "" {
 		return "", "", false
 	}

@@ -49,7 +49,7 @@ func TestParseDeviceRealUserAgents(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			device, os, isBot := parseDevice(tc.ua)
+			device, os, isBot := ParseDevice(tc.ua)
 			if device != tc.device {
 				t.Errorf("device = %q, want %q", device, tc.device)
 			}
@@ -64,7 +64,7 @@ func TestParseDeviceRealUserAgents(t *testing.T) {
 }
 
 func TestParseDeviceEmptyUA(t *testing.T) {
-	device, os, isBot := parseDevice("")
+	device, os, isBot := ParseDevice("")
 	if device != "" || os != "" || isBot {
 		t.Errorf("UA vazio deve retornar campos vazios, got %q/%q/%v", device, os, isBot)
 	}
