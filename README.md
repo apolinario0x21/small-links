@@ -13,7 +13,7 @@ o mesmo link (dedup por HMAC), e cada clique alimenta estatísticas agregadas �
 com métricas Prometheus. Arquitetura em camadas, dependências injetadas por struct e testes de
 caracterização cobrindo os endpoints.
 
-🔗 **Demo:** `https://[SEU-DOMINIO]` _(substituir pelo link de produção do Railway)_
+🔗 **Demo em produção:** **[small-links.onrender.com](https://small-links.onrender.com)** — app no Render (auto-deploy da `main`), PostgreSQL no Neon.
 
 ---
 
@@ -50,7 +50,7 @@ caracterização cobrindo os endpoints.
 | Documentação | OpenAPI/Swagger (`swaggo/swag` + `gin-swagger`) |
 | Empacotamento | Docker + Docker Compose |
 | CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`) |
-| Deploy | Railway |
+| Deploy | Render (app, auto-deploy da `main`) + Neon (PostgreSQL) |
 
 ## 🏗️ Arquitetura
 
@@ -87,7 +87,7 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 **Request**
 
 ```bash
-curl -X POST "https://[SEU-DOMINIO]/api/shorten" \
+curl -X POST "https://small-links.onrender.com/api/shorten" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://www.exemplo.com/pagina", "custom_alias": "promo", "expires_in_days": 30}'
 ```
@@ -97,7 +97,7 @@ curl -X POST "https://[SEU-DOMINIO]/api/shorten" \
 ```json
 {
   "short_id": "promo",
-  "short_url": "https://[SEU-DOMINIO]/promo",
+  "short_url": "https://small-links.onrender.com/promo",
   "original_url": "https://www.exemplo.com/pagina",
   "created_at": "2026-07-10T12:00:00Z",
   "expires_at": "2026-08-09T12:00:00Z"
@@ -112,7 +112,7 @@ Se a URL já tiver sido encurtada, a resposta é `200 OK` com o `short_id` exist
 **Request**
 
 ```bash
-curl "https://[SEU-DOMINIO]/stats/promo"
+curl "https://small-links.onrender.com/stats/promo"
 ```
 
 **Response** `200 OK`
@@ -137,7 +137,7 @@ curl "https://[SEU-DOMINIO]/stats/promo"
 ### Exemplo — QR code
 
 ```bash
-curl "https://[SEU-DOMINIO]/qr/promo" --output qr.png
+curl "https://small-links.onrender.com/qr/promo" --output qr.png
 ```
 
 ### 📖 Documentação interativa (Swagger)
@@ -147,6 +147,8 @@ A API é documentada via OpenAPI e servida com uma UI interativa (Swagger UI):
 ```
 http://localhost:8080/swagger/index.html
 ```
+
+Em produção (enquanto habilitada): <https://small-links.onrender.com/swagger/index.html>.
 
 Lá é possível ver todos os endpoints, schemas de request/response e disparar chamadas de teste.
 A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para desabilitá-la.
@@ -203,7 +205,12 @@ go vet ./...       # análise estática
 
 Ambiente **de desenvolvimento** com Prometheus + Grafana para visualizar as métricas
 expostas em `/metrics`. É **separado do deploy** — não faz parte do `docker-compose.yml`
-principal nem do Railway; serve só para inspecionar o serviço rodando localmente.
+principal nem do ambiente de produção (Render); serve só para inspecionar o serviço
+rodando localmente.
+
+![Dashboard do Grafana](docs/grafana-dashboard.png)
+
+> _Print do dashboard *Small Links — Overview* — adicione a imagem em `docs/grafana-dashboard.png`._
 
 Pré-requisito: a stack principal precisa estar no ar, pois o compose de observabilidade se
 conecta à rede `small-links-net` (declarada como `external`):
@@ -264,13 +271,18 @@ gere alguns acessos a short links para populá-los.
   estatísticas agregadas de `/stats/{short_id}`.
 - As URLs originais são cifradas com AES-256-GCM antes do armazenamento.
 
-## 🚢 Deploy (Railway)
+## 🚢 Deploy
 
-1. Faça um fork deste repositório e conecte sua conta do Railway ao GitHub.
-2. Crie um projeto a partir do fork e adicione um banco **PostgreSQL** (o Railway injeta
-   `DATABASE_URL` automaticamente).
-3. Configure a variável `ENCRYPTION_KEY` (32 caracteres).
-4. O deploy roda a cada push; o schema é migrado na inicialização.
+Em produção o app roda no **Render** com **auto-deploy da branch `main`** e banco **PostgreSQL
+no Neon**. Cada merge na `main` com o CI verde vai automaticamente para produção; o schema é
+migrado na inicialização.
+
+Para hospedar a sua própria instância (Render, Railway, Fly.io ou similar):
+
+1. Provisione um PostgreSQL (Neon, Render, etc.) e obtenha a `DATABASE_URL`.
+2. Configure as variáveis `ENCRYPTION_KEY` (32 caracteres) e `DATABASE_URL`.
+3. Aponte o serviço para este repositório; o build compila `./cmd/server` e as migrations
+   rodam sozinhas no start.
 
 ## 📄 Licença
 
