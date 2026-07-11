@@ -19,7 +19,24 @@
   "refresh": "10s",
   "schemaVersion": 39,
   "tags": ["small-links"],
-  "templating": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Instância",
+        "type": "custom",
+        "description": "Alterna entre a instância local e a de produção (Render).",
+        "query": "small-links,small-links-prod",
+        "current": { "text": "small-links", "value": "small-links", "selected": true },
+        "options": [
+          { "text": "small-links", "value": "small-links", "selected": true },
+          { "text": "small-links-prod", "value": "small-links-prod", "selected": false }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
@@ -40,7 +57,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(smalllinks_redirects_total[5m])",
+          "expr": "rate(smalllinks_redirects_total{job=\"$job\"}[5m])",
           "legendFormat": "redirects/s",
           "refId": "A"
         }
@@ -60,19 +77,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.50, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\",job=\"$job\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\",job=\"$job\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(smalllinks_http_request_duration_seconds_bucket{route=\"/:shortId\",job=\"$job\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -92,25 +109,25 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"2..\"}[5m]))",
+          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"2..\",job=\"$job\"}[5m]))",
           "legendFormat": "2xx",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"3..\"}[5m]))",
+          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"3..\",job=\"$job\"}[5m]))",
           "legendFormat": "3xx",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"4..\"}[5m]))",
+          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"4..\",job=\"$job\"}[5m]))",
           "legendFormat": "4xx",
           "refId": "C"
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"5..\"}[5m]))",
+          "expr": "sum(rate(smalllinks_http_request_duration_seconds_count{status=~\"5..\",job=\"$job\"}[5m]))",
           "legendFormat": "5xx",
           "refId": "D"
         }
@@ -127,7 +144,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "smalllinks_shortens_total",
+          "expr": "smalllinks_shortens_total{job=\"$job\"}",
           "legendFormat": "shortens",
           "refId": "A"
         }
@@ -144,7 +161,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "smalllinks_rate_limited_total",
+          "expr": "smalllinks_rate_limited_total{job=\"$job\"}",
           "legendFormat": "rate limited",
           "refId": "A"
         }
@@ -164,7 +181,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "process_resident_memory_bytes",
+          "expr": "process_resident_memory_bytes{job=\"$job\"}",
           "legendFormat": "resident memory",
           "refId": "A"
         }
@@ -184,7 +201,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "go_goroutines",
+          "expr": "go_goroutines{job=\"$job\"}",
           "legendFormat": "goroutines",
           "refId": "A"
         }

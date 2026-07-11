@@ -105,10 +105,15 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +
   Grafana (3000), conectados à rede `small-links-net` (external) da stack principal. Configs em
-  `observability/`: scrape de `app:8080/metrics` (15s) e provisionamento do Grafana (datasource
-  Prometheus com `uid: prometheus`, referenciado pelos painéis do dashboard, e o dashboard
-  *Small Links — Overview*). É ambiente de desenvolvimento — **não** faz parte do deploy; a app
-  e o `docker-compose.yml` principal não foram alterados.
+  `observability/`: provisionamento do Grafana (datasource Prometheus com `uid: prometheus`,
+  referenciado pelos painéis, e o dashboard *Small Links — Overview*). É ambiente de
+  desenvolvimento — **não** faz parte do deploy; a app e o `docker-compose.yml` principal não
+  foram alterados. O Prometheus raspa **dois jobs**: `small-links` (local `app:8080`, 15s) e
+  `small-links-prod` (produção `https://small-links.onrender.com`, 60s). O dashboard tem a
+  variável de template `job` (custom: `small-links`/`small-links-prod`) e todas as queries
+  filtram por `{job="$job"}`, permitindo alternar local↔produção sem quebrar os painéis. O free
+  tier do Render hiberna quando ocioso: o alvo prod aparece **DOWN** em períodos sem tráfego
+  (esperado).
 - **Dashboard provisionado sem dados (bug corrigido)**: dashboards provisionados exigem um `uid`
   de datasource **fixo e explícito**, referenciado igual em todos os painéis *e* em cada target.
   Isso já estava correto nos arquivos, mas o volume `grafana_data` podia persistir um datasource
