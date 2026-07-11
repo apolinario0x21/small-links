@@ -262,8 +262,8 @@ docker compose -f docker-compose.observability.yml down -v    # remove os volume
 > com `docker network create small-links-net`.
 
 O dashboard traz: taxa de redirects/s, latência p50/p95/p99 do redirect, requisições por
-status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, e memória residente/goroutines
-do processo.
+status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, URLs bloqueadas pelo Safe Browsing
+(total + taxa), e memória residente/goroutines do processo.
 
 ### Dashboard sem dados / painéis vazios
 
