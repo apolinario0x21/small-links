@@ -23,6 +23,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 | GIN_MODE       | Não         | debug/release (padrão release)             |
 | SWAGGER_ENABLED| Não         | UI Swagger em /swagger (padrão on; `false` desabilita) |
 | SAFE_BROWSING_API_KEY | Não  | Chave da Google Safe Browsing; vazia desabilita a verificação |
+| GEOIP_DB_PATH  | Não         | Base MMDB DB-IP Lite (padrão /app/dbip-country-lite.mmdb); ausente = sem geo |
 
 ## Arquitetura
 
@@ -33,6 +34,7 @@ internal/crypto/     → AES-256-GCM (nonce prefixado) + Hash HMAC-SHA256 p/ ded
 internal/storage/    → interface Repository + implementação Postgres (context + timeout)
 internal/analytics/  → Recorder de cliques assíncrono (canal buffered + worker)
 internal/safebrowsing/→ cliente Google Safe Browsing (Lookup v4) p/ URLs maliciosas
+internal/geo/        → resolução IP→país via MMDB local (DB-IP Lite)
 internal/metrics/    → coletores Prometheus (counters + histograma de latência)
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
 internal/http/static/→ landing page (index.html) embutida via go:embed, servida em GET /
@@ -74,6 +76,17 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   buffered (cap 1000) + worker; buffer cheio descarta o evento com log warn. O `redirectHandler`
   publica o evento após o 302. Flush no graceful shutdown (`Recorder.Close()` antes do `db.Close()`).
 - **LGPD**: o IP do acesso é gravado apenas como HMAC-SHA256 (`ip_hash`), nunca em claro.
+- **Geo + dispositivo no clique (migration 006)**: o `Recorder` enriquece o evento no worker —
+  resolve o país do IP **antes** de gerar o `ip_hash` e descarta o IP (nunca persistido, nunca
+  sai do processo); classifica device/os/is_bot via `mileusna/useragent`. **Decisões**:
+  (a) **país, não cidade** — cidade é dado sensível demais e explode a cardinalidade da métrica
+  `smalllinks_clicks_total{country,device}` (labels Prometheus devem ter domínio pequeno;
+  ~250 países × 5 devices é aceitável, cidades não); (b) **base MMDB local (DB-IP Lite), não API
+  externa** — o IP não pode sair do processo (LGPD) e o lookup local não adiciona latência nem
+  dependência de rede. Base baixada no build do Dockerfile (CC BY 4.0, atribuição no README);
+  ausente = warn e app segue sem geo. Bots (`is_bot`) ficam fora das agregações de stats.
+  `cmd/backfill-devices` retroage device/os/is_bot pelo user_agent gravado (geo não é
+  retroagível — não há IP).
 - **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias) e
   `top_referrers` (top 5), mantendo os campos antigos. Fatias vazias serializam como `[]`.
 - **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
