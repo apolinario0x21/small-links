@@ -1,6 +1,7 @@
 # CLAUDE.md — small-links
 
-Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. Deploy no Railway.
+Encurtador de URLs em Go (Gin) com PostgreSQL, criptografia AES-GCM e Docker. Em produção no
+Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.onrender.com>.
 
 ## Comandos
 
@@ -118,13 +119,18 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   o uid do datasource é o contrato entre datasource e painéis — fixe-o dos dois lados e garanta
   que estado persistido não sobreponha um uid divergente.
 
-## Pendências de deploy
+## Deploy
 
-1. **TRUNCATE no deploy final**: rodar `TRUNCATE TABLE urls;` no banco do Railway antes de
-   qualquer teste — os registros CTR legados foram deliberadamente descartados (Caminho A,
-   jul/2026). Até lá, links antigos em produção estão quebrados: comportamento conhecido e aceito.
+**✅ Concluído (11/07/2026)** — app no **Render** (auto-deploy da `main`) + **PostgreSQL no Neon**:
+<https://small-links.onrender.com>.
+
+1. ~~**TRUNCATE no deploy final** (Caminho A): descartar os registros CTR legados antes de testar.~~
+   **Não se aplica mais**: o banco do Neon nasceu **novo e vazio**, sem registros CTR legados —
+   não há `TRUNCATE` a rodar.
 2. ~~**`cmd/migrate-gcm` é código morto** com essa decisão — remover em commit futuro.~~ ✅ removido.
-3. **Commits marcados como "aplicar após operação manual"** devem ficar em PR separado.
+3. **Auto-deploy contínuo**: todo merge na `main` vai automaticamente para produção. O **CI verde**
+   (`gofmt`, `go vet`, `go build`, `go test`) é o **portão de qualidade** antes do merge.
+4. **Commits que exigem operação manual** continuam devendo ficar em PR separado (política mantida).
 
 ## Backlog priorizado
 
@@ -133,8 +139,12 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 3. ~~**Refatoração estrutural** para a arquitetura alvo~~ ✅ (PR #2)
 4. ~~**Segurança**: AES-GCM, POST /api/shorten, validação, rate limiting, Dockerfile~~ ✅ (PR #3)
 5. ~~**Dedup**: url_hash HMAC-SHA256 indexado~~ ✅
-   - Pelo Caminho A (jul/2026), os registros CTR legados são descartados via `TRUNCATE` no
-     deploy final; o fallback `decryptLegacyCTR` e o backfill `cmd/migrate-gcm` foram removidos.
+   - Pelo Caminho A (jul/2026), o fallback `decryptLegacyCTR` e o backfill `cmd/migrate-gcm`
+     foram removidos. Na prática o banco de produção (Neon) nasceu vazio, então não houve
+     `TRUNCATE` a rodar — ver seção **Deploy**.
 6. ~~**Features**: eventos de clique + registro assíncrono, stats expandido, `/metrics`
    Prometheus, alias customizado, expiração/TTL, QR code~~ ✅
-7. **Extras**: cache Redis para redirects quentes, frontend em Next.js.
+7. **Landing page na rota `/`** — **próxima prioridade acordada**. Hoje `GET /` retorna 404
+   (só existe o catch-all `/:shortId`, que exige um segmento). Servir uma página inicial
+   (formulário de encurtar + branding), sem colidir com o roteamento de short_id.
+8. **Extras**: cache Redis para redirects quentes, frontend em Next.js.
