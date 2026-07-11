@@ -208,9 +208,10 @@ expostas em `/metrics`. É **separado do deploy** — não faz parte do `docker-
 principal nem do ambiente de produção (Render); serve só para inspecionar o serviço
 rodando localmente.
 
-![Dashboard do Grafana](docs/grafana-dashboard.png)
+![Dashboard Grafana — ambiente local monitorando também a instância de produção no Render](docs/grafana-dashboard.png)
 
-> _Print do dashboard *Small Links — Overview* — adicione a imagem em `docs/grafana-dashboard.png`._
+> _Dashboard **Small Links — Overview**: o Prometheus local raspa tanto a instância local quanto
+> a de produção (Render); a variável **Instância** no topo alterna entre elas._
 
 Pré-requisito: a stack principal precisa estar no ar, pois o compose de observabilidade se
 conecta à rede `small-links-net` (declarada como `external`):
