@@ -155,9 +155,9 @@ func (p *Postgres) InsertClickEvent(ctx context.Context, e ClickEvent) error {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))`
-	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash)
+	const insertSQL = `INSERT INTO click_events (short_id, referrer, user_agent, ip_hash, country, device, os, is_bot)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8)`
+	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash, e.Country, e.Device, e.OS, e.IsBot)
 	return err
 }
 

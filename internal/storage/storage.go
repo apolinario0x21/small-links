@@ -31,11 +31,17 @@ type URLData struct {
 
 // ClickEvent é um evento de acesso a um short link, gravado de forma
 // assíncrona. Referrer e UserAgent podem ser vazios; IPHash é o HMAC do IP.
+// Country (ISO 3166-1 alpha-2), Device, OS e IsBot são enriquecidos pelo
+// Recorder no momento do clique; campos vazios viram NULL.
 type ClickEvent struct {
 	ShortID   string
 	Referrer  string
 	UserAgent string
 	IPHash    string
+	Country   string
+	Device    string
+	OS        string
+	IsBot     bool
 }
 
 // DailyClicks agrega cliques por dia (Day no formato ISO YYYY-MM-DD).
