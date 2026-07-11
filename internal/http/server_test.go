@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -45,10 +46,18 @@ type noopRecorder struct{}
 func (noopRecorder) Record(storage.ClickEvent) {}
 
 func setupTest(t *testing.T) (*gin.Engine, sqlmock.Sqlmock) {
-	return setupTestSwagger(t, true)
+	return setupTestFull(t, true, nil)
 }
 
 func setupTestSwagger(t *testing.T, swaggerEnabled bool) (*gin.Engine, sqlmock.Sqlmock) {
+	return setupTestFull(t, swaggerEnabled, nil)
+}
+
+func setupTestChecker(t *testing.T, checker URLChecker) (*gin.Engine, sqlmock.Sqlmock) {
+	return setupTestFull(t, true, checker)
+}
+
+func setupTestFull(t *testing.T, swaggerEnabled bool, checker URLChecker) (*gin.Engine, sqlmock.Sqlmock) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
@@ -58,9 +67,19 @@ func setupTestSwagger(t *testing.T, swaggerEnabled bool) (*gin.Engine, sqlmock.S
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled)
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, checker, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled)
 
 	return server.Router(), mock
+}
+
+// fakeChecker implementa URLChecker para os testes de integração.
+type fakeChecker struct {
+	malicious bool
+	err       error
+}
+
+func (f fakeChecker) Malicious(_ context.Context, _ string) (bool, error) {
+	return f.malicious, f.err
 }
 
 func doRequest(router *gin.Engine, method, path string) *httptest.ResponseRecorder {
@@ -310,6 +329,51 @@ func TestAPIShortenAliasTooLongForColumn(t *testing.T) {
 	body := decodeBody(t, w)
 	if body["error"] != "custom_alias is too long" {
 		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenBlocksMaliciousURL(t *testing.T) {
+	router, mock := setupTestChecker(t, fakeChecker{malicious: true})
+
+	// URL maliciosa: nenhuma query ao banco (bloqueia antes do dedup/insert).
+	w := doJSONPost(router, "/api/shorten", `{"url": "http://malware.test"}`)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body = %s", w.Code, w.Body.String())
+	}
+	body := decodeBody(t, w)
+	if body["error"] != "URL bloqueada: identificada como potencialmente maliciosa" {
+		t.Errorf("error = %q", body["error"])
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenFailOpenOnCheckerError(t *testing.T) {
+	router, mock := setupTestChecker(t, fakeChecker{err: errTest})
+
+	// Erro na verificação → fail-open: a criação prossegue normalmente.
+	expectNoDedup(mock)
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (fail-open); body = %s", w.Code, w.Body.String())
+	}
+	expectations(t, mock)
+}
+
+func TestAPIShortenCleanURLPasses(t *testing.T) {
+	router, mock := setupTestChecker(t, fakeChecker{malicious: false})
+
+	expectNoDedup(mock)
+	mock.ExpectExec(`INSERT INTO urls`).WillReturnResult(sqlmock.NewResult(1, 1))
+
+	w := doJSONPost(router, "/api/shorten", `{"url": "https://www.example.com"}`)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
 	}
 	expectations(t, mock)
 }

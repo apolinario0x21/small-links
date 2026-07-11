@@ -209,6 +209,7 @@
         switch (status) {
           case 400: msg = "URL ou alias inválido. Confira os campos e tente novamente."; break;
           case 409: msg = "Esse alias já está em uso. Escolha outro."; break;
+          case 422: msg = "URL bloqueada: identificada como potencialmente maliciosa."; break;
           case 429: msg = "Muitas requisições em pouco tempo. Aguarde cerca de 1 minuto e tente de novo."; break;
           default:  msg = "Não foi possível encurtar agora. Tente novamente em instantes.";
         }

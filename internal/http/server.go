@@ -2,6 +2,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"log/slog"
@@ -31,20 +32,28 @@ type ClickRecorder interface {
 	Record(e storage.ClickEvent)
 }
 
+// URLChecker verifica se uma URL é maliciosa. Satisfeito por
+// *safebrowsing.Client; nil desabilita a verificação. Um erro não-nil sinaliza
+// falha da própria checagem (o handler faz fail-open).
+type URLChecker interface {
+	Malicious(ctx context.Context, rawURL string) (bool, error)
+}
+
 // Server agrega as dependências dos handlers.
 type Server struct {
 	repo           storage.Repository
 	cipher         *crypto.Cipher
 	recorder       ClickRecorder
+	checker        URLChecker
 	logger         *slog.Logger
 	swaggerEnabled bool
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, logger *slog.Logger, swaggerEnabled bool) *Server {
+func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, checker URLChecker, logger *slog.Logger, swaggerEnabled bool) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{repo: repo, cipher: cipher, recorder: recorder, logger: logger, swaggerEnabled: swaggerEnabled}
+	return &Server{repo: repo, cipher: cipher, recorder: recorder, checker: checker, logger: logger, swaggerEnabled: swaggerEnabled}
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -208,6 +217,7 @@ type ShortenRequest struct {
 // @Param        url  query     string  true  "URL original (http/https)"
 // @Success      200  {object}  ShortenResponse
 // @Failure      400  {object}  ErrorResponse
+// @Failure      422  {object}  ErrorResponse  "URL bloqueada (maliciosa)"
 // @Failure      429  {object}  ErrorResponse
 // @Failure      500  {object}  ErrorResponse
 // @Router       /shorten [get]
@@ -233,6 +243,7 @@ func (s *Server) shortenHandler(c *gin.Context) {
 // @Success      200      {object}  ShortenResponse  "URL já existente (dedup)"
 // @Failure      400      {object}  ErrorResponse    "Body ou URL inválidos"
 // @Failure      409      {object}  ErrorResponse    "Alias já em uso ou reservado"
+// @Failure      422      {object}  ErrorResponse    "URL bloqueada (maliciosa)"
 // @Failure      500      {object}  ErrorResponse
 // @Router       /api/shorten [post]
 func (s *Server) apiShortenHandler(c *gin.Context) {
@@ -259,6 +270,20 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 	if err := validateURL(originalUrl, c.Request.Host); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Verificação de URL maliciosa (Safe Browsing), antes do dedup e do
+	// insert. Falha da API é fail-open (permite criar), com log warn e métrica.
+	if s.checker != nil {
+		switch blocked, err := s.checker.Malicious(c.Request.Context(), originalUrl); {
+		case err != nil:
+			s.logger.Warn("safe browsing check failed, allowing (fail-open)", "error", err)
+			metrics.SafeBrowsingErrorsTotal.Inc()
+		case blocked:
+			metrics.SafeBrowsingBlockedTotal.Inc()
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "URL bloqueada: identificada como potencialmente maliciosa"})
+			return
+		}
 	}
 
 	urlHash := s.cipher.Hash(originalUrl)

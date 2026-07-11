@@ -26,6 +26,18 @@ var (
 		Help: "Total de requisições rejeitadas por rate limiting.",
 	})
 
+	// SafeBrowsingBlockedTotal conta URLs recusadas por serem maliciosas.
+	SafeBrowsingBlockedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_safebrowsing_blocked_total",
+		Help: "Total de URLs bloqueadas pela verificação Safe Browsing.",
+	})
+
+	// SafeBrowsingErrorsTotal conta falhas da verificação (fail-open).
+	SafeBrowsingErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_safebrowsing_errors_total",
+		Help: "Total de erros/timeouts na verificação Safe Browsing (fail-open).",
+	})
+
 	// RequestDuration mede a latência HTTP por método, rota e status.
 	RequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "smalllinks_http_request_duration_seconds",
