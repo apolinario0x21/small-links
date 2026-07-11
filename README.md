@@ -228,7 +228,16 @@ docker compose -f docker-compose.observability.yml up -d
 - **Grafana**: http://localhost:3000 (login inicial `admin` / `admin`). O datasource
   Prometheus e o dashboard *Small Links — Overview* já vêm provisionados — nenhum clique
   de configuração é necessário.
-- **Prometheus**: http://localhost:9090 (faz scrape de `app:8080/metrics` a cada 15s).
+- **Prometheus**: http://localhost:9090. Raspa dois alvos:
+  - `small-links` — instância local (`app:8080/metrics`, a cada 15s);
+  - `small-links-prod` — **produção** no Render (`small-links.onrender.com/metrics`, a cada 60s).
+
+O dashboard tem uma variável **Instância** (`job`) no topo para alternar entre `small-links`
+(local) e `small-links-prod` sem editar os painéis.
+
+> ⚠️ O free tier do Render **hiberna** o serviço quando ocioso. Nesses períodos o alvo
+> `small-links-prod` aparece **DOWN** no Prometheus e os painéis de produção ficam sem dados
+> até o serviço acordar (o primeiro acesso o desperta). É esperado — não é falha do scrape.
 
 Derrubar (com `-v` para também apagar os volumes de dados):
 
