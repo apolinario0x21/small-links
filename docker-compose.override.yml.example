@@ -1,0 +1,18 @@
+# Exemplo de ajustes locais por máquina — NUNCA commitados.
+#
+# O Docker Compose funde automaticamente docker-compose.override.yml (se
+# existir) com o docker-compose.yml em todo `docker compose up/config`. O
+# arquivo real está no .gitignore: cada máquina mantém os seus ajustes sem
+# gerar conflito em `git pull` nem sujar o docker-compose.yml versionado.
+#
+# Para usar: copie este arquivo e edite conforme a sua máquina.
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# Caso de uso real (exemplo abaixo): a porta 5432 do host já está ocupada por
+# outro Postgres — remapear o db para 5433. A tag YAML `!override` substitui a
+# lista de portas do arquivo principal em vez de somar a ela (sem a tag, o
+# merge do Compose publicaria 5432 E 5433 ao mesmo tempo).
+services:
+  db:
+    ports: !override
+      - "5433:5432"
