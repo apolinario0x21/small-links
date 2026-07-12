@@ -227,7 +227,7 @@ const docTemplate = `{
         },
         "/stats/{shortId}": {
             "get": {
-                "description": "Retorna access_count, total_clicks, clicks_per_day (30 dias) e top_referrers (top 5).",
+                "description": "Retorna access_count, total_clicks, clicks_per_day (30 dias), top_referrers (top 5), top_countries e devices. Bots (is_bot) ficam fora de todas as agregações; país/device não classificado aparece como \"unknown\". top_countries lista todos os países (sem top-5), de modo que a soma de top_countries e a soma de devices batem com total_clicks.",
                 "produces": [
                     "application/json"
                 ],
