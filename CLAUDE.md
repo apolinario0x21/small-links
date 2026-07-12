@@ -12,6 +12,11 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Dependências: `go mod tidy`
 - Regenerar docs OpenAPI: `swag init -g cmd/server/main.go --parseInternal -o docs` (após mudar anotações)
+- **Sem Go instalado na máquina local** — rodar a sequência do CI via Docker antes de commitar:
+  `docker run --rm --user $(id -u):$(id -g) -v $PWD:/app -w /app golang:1.25-alpine sh -c "gofmt -l . && go vet ./... && go build ./... && go test ./..."`
+  (o CI para no primeiro step que falha: um erro de gofmt **mascara** erros de vet/build/test —
+  já escondeu um import não usado que só apareceu depois de formatar; nunca commitar sem a
+  sequência completa verde)
 
 ## Variáveis de ambiente
 

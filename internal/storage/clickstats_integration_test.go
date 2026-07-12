@@ -9,7 +9,6 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/apolinario0x21/small-links/internal/storage"
-	"github.com/apolinario0x21/small-links/migrations"
 )
 
 // TestClickStatsAggregationsShareExclusionCriteria valida, contra um Postgres
@@ -54,9 +53,9 @@ func TestClickStatsAggregationsShareExclusionCriteria(t *testing.T) {
 		{ShortID: shortID, Country: "BR", Device: "mobile"},
 		{ShortID: shortID, Country: "BR", Device: "desktop"},
 		{ShortID: shortID, Country: "US", Device: "mobile"},
-		{ShortID: shortID, Country: "", Device: "tablet"},   // país unknown
-		{ShortID: shortID, Country: "PT", Device: ""},       // device unknown
-		{ShortID: shortID, Country: "", Device: ""},         // ambos unknown
+		{ShortID: shortID, Country: "", Device: "tablet"},                // país unknown
+		{ShortID: shortID, Country: "PT", Device: ""},                    // device unknown
+		{ShortID: shortID, Country: "", Device: ""},                      // ambos unknown
 		{ShortID: shortID, Country: "BR", Device: "mobile", IsBot: true}, // excluído
 		{ShortID: shortID, Country: "", Device: "", IsBot: true},         // excluído
 	}
