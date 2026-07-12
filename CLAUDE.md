@@ -12,6 +12,11 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Dependências: `go mod tidy`
 - Regenerar docs OpenAPI: `swag init -g cmd/server/main.go --parseInternal -o docs` (após mudar anotações)
+- **Sem Go instalado na máquina local** — rodar a sequência do CI via Docker antes de commitar:
+  `docker run --rm --user $(id -u):$(id -g) -v $PWD:/app -w /app golang:1.25-alpine sh -c "gofmt -l . && go vet ./... && go build ./... && go test ./..."`
+  (o CI para no primeiro step que falha: um erro de gofmt **mascara** erros de vet/build/test —
+  já escondeu um import não usado que só apareceu depois de formatar; nunca commitar sem a
+  sequência completa verde)
 
 ## Variáveis de ambiente
 
@@ -165,6 +170,16 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   filtram por `{job="$job"}`, permitindo alternar local↔produção sem quebrar os painéis. O free
   tier do Render hiberna quando ocioso: o alvo prod aparece **DOWN** em períodos sem tráfego
   (esperado).
+- **Docker: rede com nome fixo + override local**: a rede `small-links-net` tem
+  `name: small-links-net` explícito no `docker-compose.yml` — sem isso o Compose a criava com
+  prefixo do diretório do projeto (`small-links_small-links-net`), quebrando o
+  `docker-compose.observability.yml` (que a referencia como `external`) em clones com outro
+  nome de pasta. **Regra**: ajustes por máquina (ex.: porta do Postgres remapeada para 5433
+  quando a 5432 do host está ocupada) vão no `docker-compose.override.yml` — fundido
+  automaticamente pelo Compose, **gitignored**, documentado no
+  `docker-compose.override.yml.example` versionado — **nunca** como modificação local do
+  arquivo versionado (gerava conflito em todo pull). Para substituir (e não somar) uma lista
+  como `ports` no override, usar a tag YAML `!override`.
 - **Dashboard provisionado sem dados (bug corrigido)**: dashboards provisionados exigem um `uid`
   de datasource **fixo e explícito**, referenciado igual em todos os painéis *e* em cada target.
   Isso já estava correto nos arquivos, mas o volume `grafana_data` podia persistir um datasource

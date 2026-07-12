@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# Ajustes locais por máquina do Docker Compose (ver docker-compose.override.yml.example)
+docker-compose.override.yml
+
 # Editor/IDE
 # .idea/
 # .vscode/

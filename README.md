@@ -189,6 +189,15 @@ O serviço fica em `http://localhost:8080` e o schema é criado/migrado automati
 inicialização. Abra `http://localhost:8080/` no navegador para a **landing page** (ou use a de
 produção em <https://small-links.onrender.com>).
 
+**Ajustes locais (portas ocupadas etc.):** ajustes específicos da sua máquina — como remapear
+a porta do Postgres quando a 5432 do host já estiver em uso — vão em um
+`docker-compose.override.yml`, que o Compose funde automaticamente com o arquivo principal e
+que está no `.gitignore` (nunca é commitado). Copie o exemplo versionado e adapte:
+
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+```
+
 <details>
 <summary>Rodar sem Docker (Go + Postgres local)</summary>
 
@@ -259,10 +268,10 @@ docker compose -f docker-compose.observability.yml down -v    # remove os volume
 ```
 
 > Se a rede `small-links-net` não existir, o compose de observabilidade falha ao subir.
-> Ela é criada automaticamente pelo `docker compose up` da stack principal; caso o Compose
-> a tenha criado com prefixo de projeto (ex.: `small-links_small-links-net`), ajuste o campo
-> `name:` da rede externa no `docker-compose.observability.yml` ou crie uma rede compartilhada
-> com `docker network create small-links-net`.
+> Ela é criada automaticamente pelo `docker compose up` da stack principal — com nome fixo
+> (`name: small-links-net` no `docker-compose.yml`), sem o prefixo de projeto que o Compose
+> aplicaria por padrão. Para subir a observabilidade sem a stack principal, crie a rede
+> manualmente com `docker network create small-links-net`.
 
 O dashboard traz: taxa de redirects/s, latência p50/p95/p99 do redirect, requisições por
 status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, URLs bloqueadas pelo Safe Browsing
