@@ -453,7 +453,7 @@ func (s *Server) redirectHandler(c *gin.Context) {
 
 // statsHandler devolve estatísticas de acesso de um short link.
 // @Summary      Estatísticas de um short link
-// @Description  Retorna access_count, total_clicks, clicks_per_day (30 dias) e top_referrers (top 5).
+// @Description  Retorna access_count, total_clicks, clicks_per_day (30 dias), top_referrers (top 5), top_countries e devices. Bots (is_bot) ficam fora de todas as agregações; país/device não classificado aparece como "unknown". top_countries lista todos os países (sem top-5), de modo que a soma de top_countries e a soma de devices batem com total_clicks.
 // @Tags         stats
 // @Produce      json
 // @Param        shortId  path      string  true  "Identificador do short link"
