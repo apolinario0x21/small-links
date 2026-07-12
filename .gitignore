@@ -31,11 +31,8 @@ go.work.sum
 docker-compose.override.yml
 docker-compose.override.yml.example
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
-
-# intellij
-.idea
 
 # Compiled binary
 go-gin-url
