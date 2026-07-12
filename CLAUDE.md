@@ -87,8 +87,23 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   ausente = warn e app segue sem geo. Bots (`is_bot`) ficam fora das agregações de stats.
   `cmd/backfill-devices` retroage device/os/is_bot pelo user_agent gravado (geo não é
   retroagível — não há IP).
-- **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias) e
-  `top_referrers` (top 5), mantendo os campos antigos. Fatias vazias serializam como `[]`.
+- **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias),
+  `top_referrers` (top 5), `top_countries` e `devices`, mantendo os campos antigos. Fatias
+  vazias serializam como `[]`.
+- **Agregações compartilham critério de exclusão (bug corrigido)**: todas as agregações de um
+  mesmo payload de stats aplicam o **mesmo critério de exclusão** — só `is_bot=true` é excluído,
+  uniformemente, de `total_clicks`, `clicks_per_day`, `top_countries` e `devices`. Cliques com
+  país/device não classificado (gravados como `NULL` via `NULLIF(...,'')` no insert) entram como
+  categoria `"unknown"` via `COALESCE(col, 'unknown')`, **nunca omitidos**. `top_countries`
+  deixou de ter `LIMIT 5` para garantir `soma(top_countries) == soma(devices) == total_clicks`
+  (o `LIMIT 5` permanece só em `top_referrers`, que não entra nessa regra — referrer ausente é
+  legítimo). **Bug original**: `top_countries`/`devices` filtravam `AND col IS NOT NULL`,
+  descartando silenciosamente os não classificados, enquanto `total_clicks` os contava — as
+  somas divergiam (ex.: total=7, devices=6). Teste de integração em
+  `internal/storage/clickstats_integration_test.go` (Postgres real, gated por
+  `SMALL_LINKS_TEST_DATABASE_URL`) verifica a invariante das somas. **Lição**: filtrar
+  `IS NOT NULL` numa agregação e não em outra do mesmo payload quebra a soma; categorias devem
+  virar `"unknown"`, não sumir.
 - **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
   `smalllinks_shortens_total`, `smalllinks_rate_limited_total` e histograma de latência por
   método/rota/status. Coletores no registry default (`internal/metrics`).
