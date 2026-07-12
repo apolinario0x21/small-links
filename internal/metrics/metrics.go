@@ -46,6 +46,14 @@ var (
 		Help: "Total de cliques por país e dispositivo.",
 	}, []string{"country", "device"})
 
+	// GeoUnresolvedTotal conta cliques cujo IP não resolveu para um país
+	// (base ausente, IP privado/inválido ou ausente da base). Um salto aqui
+	// costuma indicar IP de cliente resolvido errado — ver TRUSTED_PLATFORM.
+	GeoUnresolvedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_geo_unresolved_total",
+		Help: "Total de cliques sem país resolvido.",
+	})
+
 	// RequestDuration mede a latência HTTP por método, rota e status.
 	RequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "smalllinks_http_request_duration_seconds",

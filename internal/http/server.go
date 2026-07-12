@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/apolinario0x21/small-links/internal/analytics"
+	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
 	"github.com/apolinario0x21/small-links/internal/metrics"
 	"github.com/apolinario0x21/small-links/internal/storage"
@@ -42,28 +43,50 @@ type URLChecker interface {
 
 // Server agrega as dependências dos handlers.
 type Server struct {
-	repo           storage.Repository
-	cipher         *crypto.Cipher
-	recorder       ClickRecorder
-	checker        URLChecker
-	logger         *slog.Logger
-	swaggerEnabled bool
+	repo            storage.Repository
+	cipher          *crypto.Cipher
+	recorder        ClickRecorder
+	checker         URLChecker
+	logger          *slog.Logger
+	swaggerEnabled  bool
+	trustedPlatform string
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, checker URLChecker, logger *slog.Logger, swaggerEnabled bool) *Server {
+func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, checker URLChecker, logger *slog.Logger, swaggerEnabled bool, trustedPlatform string) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{repo: repo, cipher: cipher, recorder: recorder, checker: checker, logger: logger, swaggerEnabled: swaggerEnabled}
+	return &Server{
+		repo:            repo,
+		cipher:          cipher,
+		recorder:        recorder,
+		checker:         checker,
+		logger:          logger,
+		swaggerEnabled:  swaggerEnabled,
+		trustedPlatform: trustedPlatform,
+	}
 }
 
 func (s *Server) Router() *gin.Engine {
 	router := gin.Default()
 
-	// Atrás do proxy do Railway as requisições chegam da rede interna;
-	// confiar apenas em faixas privadas permite que ClientIP() leia o
-	// X-Forwarded-For do proxy sem aceitar spoofing de clientes externos.
-	if err := router.SetTrustedProxies([]string{
+	// Fonte do IP do cliente. Todo consumidor (rate limiter, analytics) usa
+	// c.ClientIP(), então a decisão de confiança vive só aqui.
+	//
+	// TRUSTED_PLATFORM=cloudflare: no Render, a cadeia é
+	// visitante → Cloudflare → proxy interno (10.x) → app. Confiar apenas em
+	// faixas privadas faz o Gin devolver o IP da BORDA Cloudflare como cliente
+	// (104.x/172.71.x), geolocalizando todo mundo como US. Com PlatformCloudflare
+	// o Gin lê CF-Connecting-IP, que a borda injeta (sobrescrevendo o que o
+	// visitante mandar) — logo não é forjável NESSA topologia, onde o tráfego
+	// externo não tem como alcançar o app sem passar pela Cloudflare.
+	//
+	// Fora dela o header seria trivialmente forjável (spoof de rate limit e de
+	// geo), por isso é opt-in por env e jamais o default. Vazio = modo padrão:
+	// SetTrustedProxies com faixas privadas, que preserva o docker compose local.
+	if s.trustedPlatform == config.PlatformCloudflare {
+		router.TrustedPlatform = gin.PlatformCloudflare
+	} else if err := router.SetTrustedProxies([]string{
 		"127.0.0.1", "::1",
 		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fd00::/8",
 	}); err != nil {
