@@ -176,6 +176,7 @@ A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para 
 | `SWAGGER_ENABLED` | Não | `true` | UI do Swagger em `/swagger`. Defina `false` para desabilitar (ex.: produção). |
 | `SAFE_BROWSING_API_KEY` | Não | — | Chave da Google Safe Browsing API. Vazia desabilita a verificação de URL maliciosa. |
 | `GEOIP_DB_PATH` | Não | `/app/dbip-country-lite.mmdb` | Caminho da base MMDB (DB-IP Lite) para geolocalização por país. Ausente/inválida: app roda sem geo. |
+| `TRUSTED_PLATFORM` | Não | — | Fonte do IP do cliente. Vazio: confia só em proxies de faixa privada (Docker Compose local). `cloudflare`: lê `CF-Connecting-IP` — usar **apenas** onde a borda Cloudflare é obrigatória (produção no Render). |
 
 ## 🚀 Rodando localmente
 
@@ -213,12 +214,11 @@ go run ./cmd/server
 
 </details>
 
-**Testes e verificações:**
+**Testes e verificações:** `make check` roda os três passos exigidos antes de qualquer commit
+(o CI para no primeiro que falhar):
 
 ```bash
-go test ./...      # suíte completa
-gofmt -l .         # formatação
-go vet ./...       # análise estática
+make check         # gofmt -w . && go vet ./... && go test ./...
 ```
 
 ## 📈 Observabilidade local
