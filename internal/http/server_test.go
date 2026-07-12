@@ -1083,3 +1083,74 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	expectations(t, mock)
 }
+
+// --- Resolução do IP do cliente (TRUSTED_PLATFORM) ---
+
+// clientIPRouter monta um router com o mesmo esquema de confiança do Server e
+// uma rota que devolve o IP resolvido, permitindo asserção direta.
+func clientIPRouter(t *testing.T, trustedPlatform string) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+
+	mockDB, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create sqlmock: %v", err)
+	}
+	t.Cleanup(func() { mockDB.Close() })
+
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), false, trustedPlatform)
+
+	router := server.Router()
+	router.GET("/client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+	return router
+}
+
+func TestClientIPCloudflarePlatform(t *testing.T) {
+	router := clientIPRouter(t, "cloudflare")
+
+	req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+	req.Header.Set("CF-Connecting-IP", "203.0.113.7")
+	// A borda Cloudflare também aparece no X-Forwarded-For; o header da
+	// plataforma tem precedência.
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, 172.71.1.1")
+	req.RemoteAddr = "10.0.0.5:1234"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Body.String(); got != "203.0.113.7" {
+		t.Errorf("ClientIP = %q, want %q (CF-Connecting-IP)", got, "203.0.113.7")
+	}
+}
+
+func TestClientIPIgnoresCloudflareHeaderByDefault(t *testing.T) {
+	router := clientIPRouter(t, "")
+
+	// Sem TRUSTED_PLATFORM o header CF é forjável: deve ser ignorado.
+	req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+	req.Header.Set("CF-Connecting-IP", "1.2.3.4")
+	req.RemoteAddr = "203.0.113.9:1234"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Body.String(); got != "203.0.113.9" {
+		t.Errorf("ClientIP = %q, want %q (header CF ignorado)", got, "203.0.113.9")
+	}
+}
+
+func TestClientIPForwardedForChainDefault(t *testing.T) {
+	router := clientIPRouter(t, "")
+
+	// Proxy privado confiável: o primeiro IP público da cadeia é o cliente.
+	req := httptest.NewRequest(http.MethodGet, "/client-ip", nil)
+	req.Header.Set("X-Forwarded-For", "198.51.100.2, 10.0.0.7")
+	req.RemoteAddr = "10.0.0.1:1234"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if got := w.Body.String(); got != "198.51.100.2" {
+		t.Errorf("ClientIP = %q, want %q", got, "198.51.100.2")
+	}
+}
