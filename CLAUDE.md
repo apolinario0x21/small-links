@@ -29,6 +29,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 | SWAGGER_ENABLED| Não         | UI Swagger em /swagger (padrão on; `false` desabilita) |
 | SAFE_BROWSING_API_KEY | Não  | Chave da Google Safe Browsing; vazia desabilita a verificação |
 | GEOIP_DB_PATH  | Não         | Base MMDB DB-IP Lite (padrão /app/dbip-country-lite.mmdb); ausente = sem geo |
+| TRUSTED_PLATFORM | Não       | Fonte do IP do cliente: vazio = proxies de faixa privada (local); `cloudflare` = header CF-Connecting-IP (Render/produção) |
 
 ## Arquitetura
 
@@ -53,6 +54,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - Handlers recebem dependências via struct — sem variáveis globais.
 - `context.Context` com timeout em toda query de banco.
 - Logging estruturado com `log/slog`.
+- **Antes de qualquer commit, rodar `make check`** (`gofmt -w .`, `go vet ./...`, `go test ./...`) —
+  os três, nessa ordem. O CI para no primeiro step que falha, então um erro de gofmt mascara
+  erros de vet/test (já escondeu um import não usado).
 - Commits em português, padrão Conventional Commits (`feat:`, `fix:`, `refactor:`), pequenos e focados.
 - Antes de refatorar comportamento existente, manter os testes de caracterização verdes.
 - Nunca commitar `.env` nem chaves.
@@ -109,6 +113,21 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `SMALL_LINKS_TEST_DATABASE_URL`) verifica a invariante das somas. **Lição**: filtrar
   `IS NOT NULL` numa agregação e não em outra do mesmo payload quebra a soma; categorias devem
   virar `"unknown"`, não sumir.
+- **IP do cliente atrás da Cloudflare (bug de geo em prod, corrigido)**: em produção todo clique
+  era geolocalizado como **US**. Causa raiz: no Render a cadeia é
+  visitante → **Cloudflare** → proxy interno (10.x) → app. Só as faixas privadas estavam nos
+  trusted proxies, então o Gin devolvia o IP da **borda Cloudflare** (104.23.x, 172.71.x) como
+  cliente. Correção: env `TRUSTED_PLATFORM`; com `=cloudflare` o router usa
+  `gin.PlatformCloudflare` (lê `CF-Connecting-IP`). **Decisão de segurança**: o header é injetado
+  pela borda (sobrescrevendo o que o visitante enviar) e, nessa topologia, nenhum tráfego externo
+  alcança o app sem passar por ela — logo não é forjável ali. Fora dela seria trivialmente
+  forjável (spoof de rate limit e de geo), por isso é **opt-in por env e nunca o default**; vazio
+  mantém `SetTrustedProxies` com faixas privadas (Compose local). A confiança vive num único
+  ponto (`Router()`): rate limiter e `Recorder` (geo + ip_hash) consomem todos o mesmo
+  `c.ClientIP()` — nada usa `RemoteIP()`/`RemoteAddr`. Métrica
+  `smalllinks_geo_unresolved_total` acusa cliques sem país (um salto sugere IP resolvido errado).
+- **Postgres 18**: o `docker-compose.yml` local usa `postgres:18-alpine` para alinhar com a versão
+  do Neon em produção — divergência de major entre dev e prod esconde diferenças de comportamento.
 - **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
   `smalllinks_shortens_total`, `smalllinks_rate_limited_total` e histograma de latência por
   método/rota/status. Coletores no registry default (`internal/metrics`).
