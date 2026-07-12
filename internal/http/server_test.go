@@ -68,7 +68,7 @@ func setupTestFull(t *testing.T, swaggerEnabled bool, checker URLChecker) (*gin.
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, checker, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled)
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, checker, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled, "")
 
 	return server.Router(), mock
 }

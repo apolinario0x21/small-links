@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/apolinario0x21/small-links/internal/crypto"
 )
@@ -22,7 +23,12 @@ type Config struct {
 	SwaggerEnabled     bool
 	SafeBrowsingAPIKey string
 	GeoIPDBPath        string
+	TrustedPlatform    string
 }
+
+// PlatformCloudflare habilita a leitura do IP do cliente a partir do header
+// CF-Connecting-IP (ver internal/http.Server.Router).
+const PlatformCloudflare = "cloudflare"
 
 func Load() (Config, error) {
 	cfg := Config{
@@ -36,6 +42,11 @@ func Load() (Config, error) {
 		// Vazia = verificação de URL maliciosa (Safe Browsing) desabilitada.
 		SafeBrowsingAPIKey: os.Getenv("SAFE_BROWSING_API_KEY"),
 		GeoIPDBPath:        os.Getenv("GEOIP_DB_PATH"),
+		// Vazia = confia apenas nos proxies de faixa privada (comportamento
+		// padrão, seguro em qualquer topologia). "cloudflare" só é válido
+		// quando TODO o tráfego externo passa obrigatoriamente pela borda
+		// Cloudflare (caso do Render) — ver internal/http.Server.Router.
+		TrustedPlatform: strings.ToLower(strings.TrimSpace(os.Getenv("TRUSTED_PLATFORM"))),
 	}
 
 	if cfg.GeoIPDBPath == "" {

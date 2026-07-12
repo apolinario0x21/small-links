@@ -91,7 +91,11 @@ func run(logger *slog.Logger) error {
 		logger.Warn("SAFE_BROWSING_API_KEY não definida; verificação de URL maliciosa desabilitada")
 	}
 
-	server := httpapi.New(pg, cipher, recorder, checker, logger, cfg.SwaggerEnabled)
+	if cfg.TrustedPlatform == config.PlatformCloudflare {
+		logger.Info("IP do cliente lido do header CF-Connecting-IP (borda Cloudflare confiável)")
+	}
+
+	server := httpapi.New(pg, cipher, recorder, checker, logger, cfg.SwaggerEnabled, cfg.TrustedPlatform)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

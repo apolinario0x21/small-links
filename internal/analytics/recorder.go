@@ -109,6 +109,7 @@ func (r *Recorder) enrich(c Click) storage.ClickEvent {
 	country, device := e.Country, e.Device
 	if country == "" {
 		country = "unknown"
+		metrics.GeoUnresolvedTotal.Inc()
 	}
 	if device == "" {
 		device = "unknown"
