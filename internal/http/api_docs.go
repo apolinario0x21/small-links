@@ -31,13 +31,15 @@ type ReferrerCountDoc struct {
 	Count    int    `json:"count" example:"20"`
 }
 
-// CountryCountDoc agrega cliques por país (documentação).
+// CountryCountDoc agrega cliques por país (documentação). País não resolvido
+// aparece como "unknown".
 type CountryCountDoc struct {
 	Country string `json:"country" example:"BR"`
 	Count   int    `json:"count" example:"25"`
 }
 
-// DeviceCountDoc agrega cliques por dispositivo (documentação).
+// DeviceCountDoc agrega cliques por dispositivo (documentação). Device não
+// classificado aparece como "unknown".
 type DeviceCountDoc struct {
 	Device string `json:"device" example:"mobile"`
 	Count  int    `json:"count" example:"30"`

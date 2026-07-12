@@ -890,7 +890,7 @@ func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []st
 	for _, c := range countries {
 		countryRows.AddRow(c.Country, c.Count)
 	}
-	mock.ExpectQuery(`SELECT country, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
+	mock.ExpectQuery(`SELECT COALESCE\(country, 'unknown'\) AS country, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
 		WithArgs(shortID).
 		WillReturnRows(countryRows)
 
@@ -898,7 +898,7 @@ func expectClickStats(mock sqlmock.Sqlmock, shortID string, total int, days []st
 	for _, d := range devices {
 		deviceRows.AddRow(d.Device, d.Count)
 	}
-	mock.ExpectQuery(`SELECT device, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
+	mock.ExpectQuery(`SELECT COALESCE\(device, 'unknown'\) AS device, COUNT\(\*\) AS n[\s\S]*NOT is_bot`).
 		WithArgs(shortID).
 		WillReturnRows(deviceRows)
 }
