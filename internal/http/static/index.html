@@ -128,6 +128,47 @@
       width: 168px;
       height: 168px;
     }
+    .history { margin-top: 1.6rem; }
+    .history-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.6rem;
+    }
+    .history-head h2 { font-size: 1rem; margin: 0; color: var(--fg); font-weight: 600; }
+    .clear {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.75rem;
+      padding: 0.35rem 0.6rem;
+    }
+    .clear:hover { border-color: var(--danger); color: var(--danger); }
+    .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+    .history-item {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.7rem 0.8rem;
+    }
+    .history-item.hi-expired { opacity: 0.45; }
+    .hi-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+    .hi-link { color: var(--accent); text-decoration: none; word-break: break-all; font-size: 0.95rem; }
+    .hi-link:hover { text-decoration: underline; }
+    .hi-clicks { color: var(--muted); font-size: 0.75rem; white-space: nowrap; flex-shrink: 0; }
+    .hi-dest { color: var(--muted); font-size: 0.78rem; margin-top: 0.25rem; word-break: break-all; }
+    .hi-meta { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
+    .hi-time { color: var(--muted); font-size: 0.72rem; flex: 1 1 auto; }
+    .hi-copy, .hi-qr { font-size: 0.72rem; padding: 0.25rem 0.5rem; }
+    .hi-qr {
+      color: var(--fg);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-weight: 600;
+    }
+    .hi-qr:hover { border-color: var(--accent-dim); color: var(--accent); }
+    .history-note { color: var(--muted); font-size: 0.72rem; margin-top: 0.7rem; opacity: 0.8; }
     footer {
       max-width: 620px;
       margin: 2rem auto 0;
@@ -178,6 +219,15 @@
       </div>
       <p class="dest">destino: <b id="dest"></b></p>
       <img class="qr" id="qr" alt="QR code do link encurtado" width="168" height="168">
+    </section>
+
+    <section class="history" id="history" hidden>
+      <div class="history-head">
+        <h2>Seus links recentes</h2>
+        <button type="button" class="clear" id="clearHistory">limpar histórico</button>
+      </div>
+      <ul class="history-list" id="historyList"></ul>
+      <p class="history-note">Histórico armazenado apenas neste navegador; o servidor não o registra.</p>
     </section>
   </main>
 
@@ -238,6 +288,7 @@
         }
 
         result.hidden = false;
+        addToHistory(data);
       }
 
       function copyText(text) {
@@ -269,6 +320,165 @@
           setTimeout(function () { copyBtn.textContent = "copiar"; }, 1500);
         });
       });
+
+      // --- Histórico local (localStorage; o servidor não o registra) ---
+      var HISTORY_KEY = "small-links:history";
+      var HISTORY_MAX = 20;
+      var DEST_MAX = 50;
+
+      var historySection = document.getElementById("history");
+      var historyList = document.getElementById("historyList");
+      var clearBtn = document.getElementById("clearHistory");
+
+      function loadHistory() {
+        try {
+          var arr = JSON.parse(localStorage.getItem(HISTORY_KEY));
+          return Array.isArray(arr) ? arr : [];
+        } catch (e) { return []; }
+      }
+
+      function saveHistory(arr) {
+        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(arr)); } catch (e) { /* quota/privado */ }
+      }
+
+      function addToHistory(data) {
+        if (!data || !data.short_id) return;
+        var arr = loadHistory().filter(function (it) { return it.short_id !== data.short_id; });
+        arr.unshift({
+          short_id: data.short_id,
+          short_url: data.short_url,
+          original_url: data.original_url || "",
+          created_at: data.created_at || new Date().toISOString(),
+          existing: data.existing === true
+        });
+        if (arr.length > HISTORY_MAX) arr = arr.slice(0, HISTORY_MAX);
+        saveHistory(arr);
+        renderHistory();
+      }
+
+      function relativeTime(iso) {
+        var then = new Date(iso).getTime();
+        if (isNaN(then)) return "";
+        var s = Math.floor((Date.now() - then) / 1000);
+        if (s < 0) s = 0;
+        if (s < 60) return "agora";
+        var units = [
+          [60, "minuto", "minutos"],
+          [24, "hora", "horas"],
+          [30, "dia", "dias"],
+          [12, "mês", "meses"],
+          [Infinity, "ano", "anos"]
+        ];
+        var value = s / 60, i = 0;
+        for (; i < units.length - 1 && value >= units[i][0]; i++) {
+          value = value / units[i][0];
+        }
+        var n = Math.floor(value);
+        return "há " + n + " " + (n === 1 ? units[i][1] : units[i][2]);
+      }
+
+      function truncate(str, n) {
+        str = str || "";
+        return str.length > n ? str.slice(0, n) + "…" : str;
+      }
+
+      // enrichClicks busca o total de cliques por item, isoladamente: 404/410
+      // marcam o item como indisponível; erro de rede é ignorado (não trava
+      // os demais). Nada é inserido via innerHTML.
+      function enrichClicks(shortId, li, clicksEl) {
+        fetch("/stats/" + encodeURIComponent(shortId)).then(function (resp) {
+          if (resp.status === 404 || resp.status === 410) {
+            li.classList.add("hi-expired");
+            clicksEl.textContent = "indisponível";
+            return null;
+          }
+          if (!resp.ok) return null;
+          return resp.json();
+        }).then(function (data) {
+          if (!data) return;
+          var n = data.total_clicks || 0;
+          clicksEl.textContent = n + (n === 1 ? " clique" : " cliques");
+        }).catch(function () { /* rede: item fica sem contagem, sem travar */ });
+      }
+
+      function renderHistory() {
+        var arr = loadHistory();
+        while (historyList.firstChild) historyList.removeChild(historyList.firstChild);
+
+        if (arr.length === 0) { historySection.hidden = true; return; }
+        historySection.hidden = false;
+
+        arr.forEach(function (item) {
+          var li = document.createElement("li");
+          li.className = "history-item";
+
+          var top = document.createElement("div");
+          top.className = "hi-top";
+
+          // short_url: texto e href via atributos — nunca innerHTML.
+          var link = document.createElement("a");
+          link.className = "hi-link";
+          link.textContent = item.short_url;
+          link.setAttribute("href", item.short_url);
+          link.setAttribute("target", "_blank");
+          link.setAttribute("rel", "noopener noreferrer");
+          top.appendChild(link);
+
+          var clicks = document.createElement("span");
+          clicks.className = "hi-clicks";
+          top.appendChild(clicks);
+          li.appendChild(top);
+
+          // destino truncado; original_url pode ser hostil → só textContent.
+          var dest = document.createElement("div");
+          dest.className = "hi-dest";
+          dest.textContent = truncate(item.original_url, DEST_MAX);
+          dest.setAttribute("title", item.original_url);
+          li.appendChild(dest);
+
+          var meta = document.createElement("div");
+          meta.className = "hi-meta";
+
+          var time = document.createElement("span");
+          time.className = "hi-time";
+          time.textContent = relativeTime(item.created_at);
+          meta.appendChild(time);
+
+          var copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "copy hi-copy";
+          copy.textContent = "copiar";
+          copy.addEventListener("click", function () {
+            copyText(item.short_url).then(function () {
+              copy.textContent = "copiado!";
+              setTimeout(function () { copy.textContent = "copiar"; }, 1500);
+            }).catch(function () { /* ignora */ });
+          });
+          meta.appendChild(copy);
+
+          var qrLink = document.createElement("a");
+          qrLink.className = "hi-qr";
+          qrLink.textContent = "QR";
+          qrLink.setAttribute("href", "/qr/" + encodeURIComponent(item.short_id));
+          qrLink.setAttribute("target", "_blank");
+          qrLink.setAttribute("rel", "noopener noreferrer");
+          meta.appendChild(qrLink);
+
+          li.appendChild(meta);
+          historyList.appendChild(li);
+
+          enrichClicks(item.short_id, li, clicks);
+        });
+      }
+
+      clearBtn.addEventListener("click", function () {
+        if (window.confirm("Limpar todo o histórico de links deste navegador?")) {
+          try { localStorage.removeItem(HISTORY_KEY); } catch (e) { /* ignora */ }
+          renderHistory();
+        }
+      });
+
+      renderHistory();
 
       form.addEventListener("submit", function (e) {
         e.preventDefault();

@@ -137,6 +137,14 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `metricsMiddleware` a rotula como `route="/"`. O front chama `POST /api/shorten` via `fetch` e
   preenche o resultado só com `textContent`/atributos (nunca `innerHTML`) para evitar XSS
   refletido via `original_url`.
+- **Histórico de links (client-side)**: a landing guarda os links criados no `localStorage`
+  (`small-links:history`, máx. 20, dedup por `short_id`, mais recente no topo) e enriquece cada
+  item com a contagem de cliques via `GET /stats/:shortId` (404/410 esmaece o item; erro de rede
+  não trava os demais). **Decisão — histórico no cliente por privacidade**: o servidor
+  **permanece sem saber quem criou o quê** (nenhuma tabela de usuários/sessões), reforçando a
+  postura de privacidade do projeto. **Sem alteração de backend** — só o `index.html` embutido;
+  toda inserção de dados da API/localStorage no DOM é via `textContent`/atributos (nunca
+  `innerHTML`).
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +

@@ -42,6 +42,9 @@ caracterização cobrindo os endpoints.
 - **Documentação interativa** — OpenAPI/Swagger UI em `/swagger` (desabilitável por env var).
 - **Landing page** — página inicial em `/` (HTML embutido no binário via `go:embed`) com
   formulário de encurtamento, cópia do link, QR code e mensagens de erro amigáveis.
+- **Histórico local** — os links criados ficam salvos no `localStorage` do navegador (últimos
+  20, com contagem de cliques via `/stats`); **client-side por privacidade** — o servidor não
+  registra quem criou o quê.
 
 ## 🧰 Stack técnica
 
