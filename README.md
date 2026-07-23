@@ -45,6 +45,9 @@ caracterização cobrindo os endpoints.
 - **Histórico local** — os links criados ficam salvos no `localStorage` do navegador (últimos
   20, com contagem de cliques via `/stats`); **client-side por privacidade** — o servidor não
   registra quem criou o quê.
+- **Gerenciamento por token** — cada criação devolve um `management_token` secreto (uma única
+  vez); com ele, `DELETE /api/links/{short_id}` desativa o link (**soft delete**). Autorização
+  por posse do segredo, sem contas. Analytics é preservado; o `short_id` nunca é reciclado.
 
 ## 🧰 Stack técnica
 
@@ -84,7 +87,8 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET`  | `/` | Landing page (HTML) com formulário de encurtamento. |
-| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo; **200** com `"existing": true` se a URL já existia; **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
+| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo (inclui `management_token`); **200** com `"existing": true` se a URL já existia (sem token); **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
+| `DELETE` | `/api/links/{short_id}` | Desativa (soft delete) o link. Requer `Authorization: Bearer <management_token>`. **204** sucesso; **403** uniforme se o token faltar/for inválido (não revela se o `short_id` existe). |
 | `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
 | `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
 | `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5), `top_countries` (top 5) e `devices` — bots excluídos. |
@@ -150,6 +154,25 @@ curl "https://small-links.onrender.com/stats/promo"
 ```bash
 curl "https://small-links.onrender.com/qr/promo" --output qr.png
 ```
+
+### Exemplo — excluir um link (token de gerenciamento)
+
+A criação devolve `management_token` **uma única vez** — guarde-o. Ele é o segredo que autoriza
+a exclusão (não há contas; a autorização é por posse do token):
+
+```bash
+# 1) criar → a resposta traz "management_token": "a1b2...64hex"
+# 2) excluir com o token:
+curl -X DELETE "https://small-links.onrender.com/api/links/promo" \
+  -H "Authorization: Bearer a1b2c3...64hex"     # → 204 No Content
+```
+
+Após a exclusão, o redirect e o QR do link respondem **410 Gone**; as estatísticas continuam
+acessíveis (analytics preservado) e o `short_id` nunca é reaproveitado. Um token ausente ou
+inválido responde **403 uniforme** — deliberadamente sem revelar se o `short_id` existe.
+
+> **Links criados antes desta feature não são gerenciáveis** (não têm token): não há como
+> excluí-los pela API. Só links criados a partir de agora recebem `management_token`.
 
 ### 📖 Documentação interativa (Swagger)
 
