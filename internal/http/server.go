@@ -4,6 +4,7 @@ package http
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"math/big"
@@ -106,6 +107,7 @@ func (s *Server) Router() *gin.Engine {
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.GET("/shorten", createLimiter, s.shortenHandler)
 	router.POST("/api/shorten", createLimiter, s.apiShortenHandler)
+	router.DELETE("/api/links/:shortId", createLimiter, s.deleteHandler)
 	router.GET("/stats/:shortId", s.statsHandler)
 	router.GET("/qr/:shortId", s.qrHandler)
 
@@ -353,12 +355,24 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 		return
 	}
 
+	// Token de gerenciamento: gerado a cada criação nova; só o SHA-256 é
+	// persistido. O token em claro é devolvido UMA ÚNICA VEZ no response
+	// (nunca no reaproveitamento por dedup — só o criador original o tem).
+	managementToken, err := crypto.GenerateToken()
+	if err != nil {
+		s.logger.Error("failed to generate management token", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+		return
+	}
+	tokenHash := crypto.TokenSHA256(managementToken)
+
 	writeSuccess := func(shortId string, createdAt time.Time) {
 		scheme := getScheme(c)
 		response := gin.H{
-			"original_url": originalUrl,
-			"short_url":    scheme + "://" + c.Request.Host + "/" + shortId,
-			"created_at":   createdAt,
+			"original_url":     originalUrl,
+			"short_url":        scheme + "://" + c.Request.Host + "/" + shortId,
+			"created_at":       createdAt,
+			"management_token": managementToken,
 		}
 		if includeShortID {
 			response["short_id"] = shortId
@@ -372,7 +386,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 
 	// Alias fixo: uma única tentativa; colisão vira 409 Conflict.
 	if alias != "" {
-		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
+		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(alias, urlData.CreatedAt)
@@ -399,7 +413,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			return
 		}
 
-		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt}
+		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(shortId, urlData.CreatedAt)
@@ -417,15 +431,87 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
 }
 
+// dummyTokenHash é um SHA-256 fixo (64 chars) usado como alvo da comparação
+// em tempo constante quando o link não existe ou não tem token — mantém o
+// timing e o status uniformes, sem vazar existência.
+const dummyTokenHash = "0000000000000000000000000000000000000000000000000000000000000000"
+
+// bearerToken extrai o token de "Authorization: Bearer <token>".
+func bearerToken(c *gin.Context) string {
+	const prefix = "Bearer "
+	h := c.GetHeader("Authorization")
+	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
+		return strings.TrimSpace(h[len(prefix):])
+	}
+	return ""
+}
+
+// deleteHandler desativa (soft delete) um link mediante posse do token de
+// gerenciamento — autorização por segredo, sem identidade.
+// @Summary      Desativa um short link
+// @Description  Soft delete via token de gerenciamento (Authorization: Bearer <token>). Resposta 403 uniforme quando não autorizado — não revela se o short_id existe. Analytics preservado; redirect/QR passam a 410.
+// @Tags         links
+// @Produce      json
+// @Param        shortId        path    string  true  "Identificador do short link"
+// @Param        Authorization  header  string  true  "Bearer <management_token>"
+// @Success      204  "Link desativado"
+// @Failure      403  {object}  ErrorResponse  "Token ausente ou inválido (uniforme)"
+// @Failure      500  {object}  ErrorResponse
+// @Router       /api/links/{shortId} [delete]
+func (s *Server) deleteHandler(c *gin.Context) {
+	shortId := c.Param("shortId")
+
+	token := bearerToken(c)
+	if token == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid or missing management token"})
+		return
+	}
+
+	hash, exists, err := s.repo.ManagementHash(c.Request.Context(), shortId)
+	if err != nil {
+		s.logger.Error("failed to load management hash", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	// Comparação em tempo constante SEMPRE, contra o hash real ou um dummy
+	// (link inexistente/sem token) — comparação normal vazaria por timing.
+	manageable := exists && hash != ""
+	stored := hash
+	if !manageable {
+		stored = dummyTokenHash
+	}
+	provided := crypto.TokenSHA256(token)
+	match := subtle.ConstantTimeCompare([]byte(provided), []byte(stored)) == 1
+
+	if !manageable || !match {
+		// 403 uniforme: inexistente, sem token de gestão, ou token errado são
+		// indistinguíveis — não vaza a existência do short_id.
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid or missing management token"})
+		return
+	}
+
+	deleted, err := s.repo.SoftDelete(c.Request.Context(), shortId)
+	if err != nil {
+		s.logger.Error("failed to soft delete link", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+	if deleted {
+		metrics.LinksDeletedTotal.Inc()
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // redirectHandler resolve o short link e redireciona para a URL original.
 // @Summary      Redireciona um short link
-// @Description  Responde 302 para a URL original. 404 se inexistente, 410 se expirado.
+// @Description  Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado.
 // @Tags         redirect
 // @Produce      json
 // @Param        shortId  path  string  true  "Identificador do short link"
 // @Success      302  "Redirect para a URL original"
 // @Failure      404  {object}  ErrorResponse
-// @Failure      410  {object}  ErrorResponse  "Link expirado"
+// @Failure      410  {object}  ErrorResponse  "Link expirado ou desativado"
 // @Failure      500  {object}  ErrorResponse
 // @Router       /{shortId} [get]
 func (s *Server) redirectHandler(c *gin.Context) {
@@ -439,6 +525,11 @@ func (s *Server) redirectHandler(c *gin.Context) {
 		}
 		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+
+	if urlData.DeletedAt != nil {
+		c.JSON(http.StatusGone, gin.H{"error": "Short URL has been deleted"})
 		return
 	}
 
@@ -530,24 +621,30 @@ func (s *Server) statsHandler(c *gin.Context) {
 // qrHandler devolve um PNG com o QR code do short_url. Confirma que o
 // short link existe antes de gerar.
 // @Summary      QR code de um short link
-// @Description  Gera o PNG do short_url. Confirma que o link existe antes de gerar.
+// @Description  Gera o PNG do short_url. Confirma que o link existe antes de gerar. 410 se deletado.
 // @Tags         qr
 // @Produce      png
 // @Param        shortId  path  string  true  "Identificador do short link"
 // @Success      200  {file}    binary         "Imagem PNG"
 // @Failure      404  {object}  ErrorResponse
+// @Failure      410  {object}  ErrorResponse  "Link desativado"
 // @Failure      500  {object}  ErrorResponse
 // @Router       /qr/{shortId} [get]
 func (s *Server) qrHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	if _, err := s.repo.FindForRedirect(c.Request.Context(), shortId); err != nil {
+	urlData, err := s.repo.FindForRedirect(c.Request.Context(), shortId)
+	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
 			return
 		}
 		s.logger.Error("failed to query DB", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+		return
+	}
+	if urlData.DeletedAt != nil {
+		c.JSON(http.StatusGone, gin.H{"error": "Short URL has been deleted"})
 		return
 	}
 

@@ -100,3 +100,34 @@ func TestDecryptRejectsInvalidHex(t *testing.T) {
 		t.Error("Decrypt should reject invalid hex input")
 	}
 }
+
+func TestGenerateTokenUniqueAnd64Hex(t *testing.T) {
+	a, err := GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := GenerateToken()
+	if a == b {
+		t.Error("tokens devem ser únicos")
+	}
+	for _, tok := range []string{a, b} {
+		if len(tok) != 64 {
+			t.Errorf("token len = %d, want 64", len(tok))
+		}
+	}
+}
+
+func TestTokenSHA256Deterministic(t *testing.T) {
+	tok := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	h1 := TokenSHA256(tok)
+	h2 := TokenSHA256(tok)
+	if h1 != h2 {
+		t.Error("TokenSHA256 deve ser determinístico")
+	}
+	if len(h1) != 64 {
+		t.Errorf("hash len = %d, want 64", len(h1))
+	}
+	if TokenSHA256("outro") == h1 {
+		t.Error("hashes de tokens distintos devem diferir")
+	}
+}

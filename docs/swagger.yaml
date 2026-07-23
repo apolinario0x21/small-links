@@ -77,6 +77,12 @@ definitions:
       expires_at:
         example: "2026-08-09T12:00:00Z"
         type: string
+      management_token:
+        description: |-
+          ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova
+          (nunca no reaproveitamento por dedup). Guarde-o para excluir o link.
+        example: a1b2c3...64hex
+        type: string
       original_url:
         example: https://www.exemplo.com/pagina
         type: string
@@ -148,7 +154,8 @@ paths:
       - landing
   /{shortId}:
     get:
-      description: Responde 302 para a URL original. 404 se inexistente, 410 se expirado.
+      description: Responde 302 para a URL original. 404 se inexistente, 410 se expirado
+        ou deletado.
       parameters:
       - description: Identificador do short link
         in: path
@@ -165,7 +172,7 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "410":
-          description: Link expirado
+          description: Link expirado ou desativado
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":
@@ -175,6 +182,38 @@ paths:
       summary: Redireciona um short link
       tags:
       - redirect
+  /api/links/{shortId}:
+    delete:
+      description: 'Soft delete via token de gerenciamento (Authorization: Bearer
+        <token>). Resposta 403 uniforme quando não autorizado — não revela se o short_id
+        existe. Analytics preservado; redirect/QR passam a 410.'
+      parameters:
+      - description: Identificador do short link
+        in: path
+        name: shortId
+        required: true
+        type: string
+      - description: Bearer <management_token>
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Link desativado
+        "403":
+          description: Token ausente ou inválido (uniforme)
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Desativa um short link
+      tags:
+      - links
   /api/shorten:
     post:
       consumes:
@@ -238,6 +277,7 @@ paths:
   /qr/{shortId}:
     get:
       description: Gera o PNG do short_url. Confirma que o link existe antes de gerar.
+        410 se deletado.
       parameters:
       - description: Identificador do short link
         in: path
@@ -253,6 +293,10 @@ paths:
             type: file
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "410":
+          description: Link desativado
           schema:
             $ref: '#/definitions/http.ErrorResponse'
         "500":

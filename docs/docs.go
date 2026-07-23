@@ -41,6 +41,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/links/{shortId}": {
+            "delete": {
+                "description": "Soft delete via token de gerenciamento (Authorization: Bearer \u003ctoken\u003e). Resposta 403 uniforme quando não autorizado — não revela se o short_id existe. Analytics preservado; redirect/QR passam a 410.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "links"
+                ],
+                "summary": "Desativa um short link",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Identificador do short link",
+                        "name": "shortId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Bearer \u003cmanagement_token\u003e",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Link desativado"
+                    },
+                    "403": {
+                        "description": "Token ausente ou inválido (uniforme)",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/shorten": {
             "post": {
                 "description": "Cria um short link. Campos opcionais: custom_alias e expires_in_days. Se a URL já existir, responde 200 com \"existing\": true.",
@@ -133,7 +178,7 @@ const docTemplate = `{
         },
         "/qr/{shortId}": {
             "get": {
-                "description": "Gera o PNG do short_url. Confirma que o link existe antes de gerar.",
+                "description": "Gera o PNG do short_url. Confirma que o link existe antes de gerar. 410 se deletado.",
                 "produces": [
                     "image/png"
                 ],
@@ -159,6 +204,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "Link desativado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -268,7 +319,7 @@ const docTemplate = `{
         },
         "/{shortId}": {
             "get": {
-                "description": "Responde 302 para a URL original. 404 se inexistente, 410 se expirado.",
+                "description": "Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado.",
                 "produces": [
                     "application/json"
                 ],
@@ -296,7 +347,7 @@ const docTemplate = `{
                         }
                     },
                     "410": {
-                        "description": "Link expirado",
+                        "description": "Link expirado ou desativado",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -421,6 +472,11 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string",
                     "example": "2026-08-09T12:00:00Z"
+                },
+                "management_token": {
+                    "description": "ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova\n(nunca no reaproveitamento por dedup). Guarde-o para excluir o link.",
+                    "type": "string",
+                    "example": "a1b2c3...64hex"
                 },
                 "original_url": {
                     "type": "string",

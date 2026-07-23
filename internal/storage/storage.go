@@ -27,6 +27,11 @@ type URLData struct {
 	AccessCount int
 	// ExpiresAt nil = link permanente; caso contrário, expira na data.
 	ExpiresAt *time.Time
+	// ManagementTokenHash é o SHA-256 do token de gerenciamento; vazio =
+	// link não-gerenciável (criado antes da feature). DeletedAt nil = ativo;
+	// caso contrário, soft-deletado.
+	ManagementTokenHash string
+	DeletedAt           *time.Time
 }
 
 // ClickEvent é um evento de acesso a um short link, gravado de forma
@@ -88,4 +93,10 @@ type Repository interface {
 	CountURLs(ctx context.Context) (int, error)
 	InsertClickEvent(ctx context.Context, e ClickEvent) error
 	ClickStats(ctx context.Context, shortID string) (ClickStats, error)
+	// ManagementHash devolve o hash do token e se o short_id existe. Hash
+	// vazio = link não-gerenciável ou inexistente (exists distingue).
+	ManagementHash(ctx context.Context, shortID string) (hash string, exists bool, err error)
+	// SoftDelete marca o link como deletado (idempotente). Devolve true se
+	// alterou uma linha (era ativo); false se já estava deletado.
+	SoftDelete(ctx context.Context, shortID string) (bool, error)
 }
