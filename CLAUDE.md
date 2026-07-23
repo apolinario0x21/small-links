@@ -12,6 +12,11 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Dependências: `go mod tidy`
 - Regenerar docs OpenAPI: `swag init -g cmd/server/main.go --parseInternal -o docs` (após mudar anotações)
+- **Sem Go instalado na máquina local** — rodar a sequência do CI via Docker antes de commitar:
+  `docker run --rm --user $(id -u):$(id -g) -v $PWD:/app -w /app golang:1.25-alpine sh -c "gofmt -l . && go vet ./... && go build ./... && go test ./..."`
+  (o CI para no primeiro step que falha: um erro de gofmt **mascara** erros de vet/build/test —
+  já escondeu um import não usado que só apareceu depois de formatar; nunca commitar sem a
+  sequência completa verde)
 
 ## Variáveis de ambiente
 
@@ -24,6 +29,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 | SWAGGER_ENABLED| Não         | UI Swagger em /swagger (padrão on; `false` desabilita) |
 | SAFE_BROWSING_API_KEY | Não  | Chave da Google Safe Browsing; vazia desabilita a verificação |
 | GEOIP_DB_PATH  | Não         | Base MMDB DB-IP Lite (padrão /app/dbip-country-lite.mmdb); ausente = sem geo |
+| TRUSTED_PLATFORM | Não       | Fonte do IP do cliente: vazio = proxies de faixa privada (local); `cloudflare` = header CF-Connecting-IP (Render/produção) |
 
 ## Arquitetura
 
@@ -48,6 +54,9 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - Handlers recebem dependências via struct — sem variáveis globais.
 - `context.Context` com timeout em toda query de banco.
 - Logging estruturado com `log/slog`.
+- **Antes de qualquer commit, rodar `make check`** (`gofmt -w .`, `go vet ./...`, `go test ./...`) —
+  os três, nessa ordem. O CI para no primeiro step que falha, então um erro de gofmt mascara
+  erros de vet/test (já escondeu um import não usado).
 - Commits em português, padrão Conventional Commits (`feat:`, `fix:`, `refactor:`), pequenos e focados.
 - Antes de refatorar comportamento existente, manter os testes de caracterização verdes.
 - Nunca commitar `.env` nem chaves.
@@ -87,8 +96,38 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   ausente = warn e app segue sem geo. Bots (`is_bot`) ficam fora das agregações de stats.
   `cmd/backfill-devices` retroage device/os/is_bot pelo user_agent gravado (geo não é
   retroagível — não há IP).
-- **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias) e
-  `top_referrers` (top 5), mantendo os campos antigos. Fatias vazias serializam como `[]`.
+- **Stats expandido**: `/stats/:shortId` agrega `total_clicks`, `clicks_per_day` (30 dias),
+  `top_referrers` (top 5), `top_countries` e `devices`, mantendo os campos antigos. Fatias
+  vazias serializam como `[]`.
+- **Agregações compartilham critério de exclusão (bug corrigido)**: todas as agregações de um
+  mesmo payload de stats aplicam o **mesmo critério de exclusão** — só `is_bot=true` é excluído,
+  uniformemente, de `total_clicks`, `clicks_per_day`, `top_countries` e `devices`. Cliques com
+  país/device não classificado (gravados como `NULL` via `NULLIF(...,'')` no insert) entram como
+  categoria `"unknown"` via `COALESCE(col, 'unknown')`, **nunca omitidos**. `top_countries`
+  deixou de ter `LIMIT 5` para garantir `soma(top_countries) == soma(devices) == total_clicks`
+  (o `LIMIT 5` permanece só em `top_referrers`, que não entra nessa regra — referrer ausente é
+  legítimo). **Bug original**: `top_countries`/`devices` filtravam `AND col IS NOT NULL`,
+  descartando silenciosamente os não classificados, enquanto `total_clicks` os contava — as
+  somas divergiam (ex.: total=7, devices=6). Teste de integração em
+  `internal/storage/clickstats_integration_test.go` (Postgres real, gated por
+  `SMALL_LINKS_TEST_DATABASE_URL`) verifica a invariante das somas. **Lição**: filtrar
+  `IS NOT NULL` numa agregação e não em outra do mesmo payload quebra a soma; categorias devem
+  virar `"unknown"`, não sumir.
+- **IP do cliente atrás da Cloudflare (bug de geo em prod, corrigido)**: em produção todo clique
+  era geolocalizado como **US**. Causa raiz: no Render a cadeia é
+  visitante → **Cloudflare** → proxy interno (10.x) → app. Só as faixas privadas estavam nos
+  trusted proxies, então o Gin devolvia o IP da **borda Cloudflare** (104.23.x, 172.71.x) como
+  cliente. Correção: env `TRUSTED_PLATFORM`; com `=cloudflare` o router usa
+  `gin.PlatformCloudflare` (lê `CF-Connecting-IP`). **Decisão de segurança**: o header é injetado
+  pela borda (sobrescrevendo o que o visitante enviar) e, nessa topologia, nenhum tráfego externo
+  alcança o app sem passar por ela — logo não é forjável ali. Fora dela seria trivialmente
+  forjável (spoof de rate limit e de geo), por isso é **opt-in por env e nunca o default**; vazio
+  mantém `SetTrustedProxies` com faixas privadas (Compose local). A confiança vive num único
+  ponto (`Router()`): rate limiter e `Recorder` (geo + ip_hash) consomem todos o mesmo
+  `c.ClientIP()` — nada usa `RemoteIP()`/`RemoteAddr`. Métrica
+  `smalllinks_geo_unresolved_total` acusa cliques sem país (um salto sugere IP resolvido errado).
+- **Postgres 18**: o `docker-compose.yml` local usa `postgres:18-alpine` para alinhar com a versão
+  do Neon em produção — divergência de major entre dev e prod esconde diferenças de comportamento.
 - **Métricas (item 6)**: `/metrics` via promhttp; counters `smalllinks_redirects_total`,
   `smalllinks_shortens_total`, `smalllinks_rate_limited_total` e histograma de latência por
   método/rota/status. Coletores no registry default (`internal/metrics`).
@@ -158,6 +197,16 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   filtram por `{job="$job"}`, permitindo alternar local↔produção sem quebrar os painéis. O free
   tier do Render hiberna quando ocioso: o alvo prod aparece **DOWN** em períodos sem tráfego
   (esperado).
+- **Docker: rede com nome fixo + override local**: a rede `small-links-net` tem
+  `name: small-links-net` explícito no `docker-compose.yml` — sem isso o Compose a criava com
+  prefixo do diretório do projeto (`small-links_small-links-net`), quebrando o
+  `docker-compose.observability.yml` (que a referencia como `external`) em clones com outro
+  nome de pasta. **Regra**: ajustes por máquina (ex.: porta do Postgres remapeada para 5433
+  quando a 5432 do host está ocupada) vão no `docker-compose.override.yml` — fundido
+  automaticamente pelo Compose, **gitignored**, documentado no
+  `docker-compose.override.yml.example` versionado — **nunca** como modificação local do
+  arquivo versionado (gerava conflito em todo pull). Para substituir (e não somar) uma lista
+  como `ports` no override, usar a tag YAML `!override`.
 - **Dashboard provisionado sem dados (bug corrigido)**: dashboards provisionados exigem um `uid`
   de datasource **fixo e explícito**, referenciado igual em todos os painéis *e* em cada target.
   Isso já estava correto nos arquivos, mas o volume `grafana_data` podia persistir um datasource

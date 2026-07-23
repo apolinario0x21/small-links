@@ -179,6 +179,7 @@ A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para 
 | `SWAGGER_ENABLED` | Não | `true` | UI do Swagger em `/swagger`. Defina `false` para desabilitar (ex.: produção). |
 | `SAFE_BROWSING_API_KEY` | Não | — | Chave da Google Safe Browsing API. Vazia desabilita a verificação de URL maliciosa. |
 | `GEOIP_DB_PATH` | Não | `/app/dbip-country-lite.mmdb` | Caminho da base MMDB (DB-IP Lite) para geolocalização por país. Ausente/inválida: app roda sem geo. |
+| `TRUSTED_PLATFORM` | Não | — | Fonte do IP do cliente. Vazio: confia só em proxies de faixa privada (Docker Compose local). `cloudflare`: lê `CF-Connecting-IP` — usar **apenas** onde a borda Cloudflare é obrigatória (produção no Render). |
 
 ## 🚀 Rodando localmente
 
@@ -191,6 +192,15 @@ docker compose up --build
 O serviço fica em `http://localhost:8080` e o schema é criado/migrado automaticamente na
 inicialização. Abra `http://localhost:8080/` no navegador para a **landing page** (ou use a de
 produção em <https://small-links.onrender.com>).
+
+**Ajustes locais (portas ocupadas etc.):** ajustes específicos da sua máquina — como remapear
+a porta do Postgres quando a 5432 do host já estiver em uso — vão em um
+`docker-compose.override.yml`, que o Compose funde automaticamente com o arquivo principal e
+que está no `.gitignore` (nunca é commitado). Copie o exemplo versionado e adapte:
+
+```bash
+cp docker-compose.override.yml.example docker-compose.override.yml
+```
 
 <details>
 <summary>Rodar sem Docker (Go + Postgres local)</summary>
@@ -207,12 +217,11 @@ go run ./cmd/server
 
 </details>
 
-**Testes e verificações:**
+**Testes e verificações:** `make check` roda os três passos exigidos antes de qualquer commit
+(o CI para no primeiro que falhar):
 
 ```bash
-go test ./...      # suíte completa
-gofmt -l .         # formatação
-go vet ./...       # análise estática
+make check         # gofmt -w . && go vet ./... && go test ./...
 ```
 
 ## 📈 Observabilidade local
@@ -262,10 +271,10 @@ docker compose -f docker-compose.observability.yml down -v    # remove os volume
 ```
 
 > Se a rede `small-links-net` não existir, o compose de observabilidade falha ao subir.
-> Ela é criada automaticamente pelo `docker compose up` da stack principal; caso o Compose
-> a tenha criado com prefixo de projeto (ex.: `small-links_small-links-net`), ajuste o campo
-> `name:` da rede externa no `docker-compose.observability.yml` ou crie uma rede compartilhada
-> com `docker network create small-links-net`.
+> Ela é criada automaticamente pelo `docker compose up` da stack principal — com nome fixo
+> (`name: small-links-net` no `docker-compose.yml`), sem o prefixo de projeto que o Compose
+> aplicaria por padrão. Para subir a observabilidade sem a stack principal, crie a rede
+> manualmente com `docker network create small-links-net`.
 
 O dashboard traz: taxa de redirects/s, latência p50/p95/p99 do redirect, requisições por
 status (2xx/3xx/4xx/5xx), totais de shortens e rate-limited, URLs bloqueadas pelo Safe Browsing

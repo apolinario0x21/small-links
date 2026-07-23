@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     restart: always
     env_file:
       - .env
@@ -31,8 +31,12 @@ services:
     networks:
       - small-links-net
 
+# name fixo: desacopla o nome real da rede do diretório do projeto (sem o
+# prefixo automático "<pasta>_"), permitindo que o compose de observabilidade
+# a referencie como external em qualquer clone.
 networks:
   small-links-net:
+    name: small-links-net
     driver: bridge
 
 volumes:

@@ -240,12 +240,11 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 	}
 
 	countryRows, err := p.db.QueryContext(ctx,
-		`SELECT country, COUNT(*) AS n
+		`SELECT COALESCE(country, 'unknown') AS country, COUNT(*) AS n
 		 FROM click_events
-		 WHERE short_id = $1 AND NOT is_bot AND country IS NOT NULL
-		 GROUP BY country
-		 ORDER BY n DESC, country
-		 LIMIT 5`, shortID)
+		 WHERE short_id = $1 AND NOT is_bot
+		 GROUP BY COALESCE(country, 'unknown')
+		 ORDER BY n DESC, country`, shortID)
 	if err != nil {
 		return ClickStats{}, err
 	}
@@ -263,10 +262,10 @@ func (p *Postgres) ClickStats(ctx context.Context, shortID string) (ClickStats, 
 	}
 
 	deviceRows, err := p.db.QueryContext(ctx,
-		`SELECT device, COUNT(*) AS n
+		`SELECT COALESCE(device, 'unknown') AS device, COUNT(*) AS n
 		 FROM click_events
-		 WHERE short_id = $1 AND NOT is_bot AND device IS NOT NULL
-		 GROUP BY device
+		 WHERE short_id = $1 AND NOT is_bot
+		 GROUP BY COALESCE(device, 'unknown')
 		 ORDER BY n DESC, device`, shortID)
 	if err != nil {
 		return ClickStats{}, err
