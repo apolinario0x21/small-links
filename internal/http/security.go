@@ -110,18 +110,51 @@ func securityHeadersMiddleware(releaseMode bool) gin.HandlerFunc {
 // controlamos e não podemos carimbar. Ela recebe uma política relaxada apenas
 // nas rotas /swagger — desabilitável em produção via SWAGGER_ENABLED=false.
 func contentSecurityPolicy(path, nonce string) string {
-	const base = "default-src 'self'; img-src 'self' data:; connect-src 'self'; " +
-		"base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+	return sourcesFor(path, nonce) + cspBase + "; " + cspFormAction
+}
 
+// passwordPageCSP é a política da TELA DE SENHA: idêntica à geral, menos
+// `form-action`.
+//
+// Motivo (bug corrigido): o navegador valida `form-action` contra o documento
+// que contém o formulário, e a cada hop da cadeia de redirects daquele envio.
+// O destino de um short link é, por definição, uma URL externa arbitrária —
+// então `form-action 'self'` é incompatível com a única função desta página, e
+// bloqueava o usuário na tela mesmo com a senha correta. Trocar o 302 por 303
+// não resolve: o Chrome barra igualmente o hop seguinte.
+//
+// Relaxar aqui é seguro porque esta página não tem NENHUM conteúdo controlável
+// por terceiros: é um template embutido cujas únicas variáveis são o nonce, o
+// action (o próprio short_id, já validado) e uma mensagem de erro constante.
+// Não há superfície de injeção para um formulário forjado explorar.
+func passwordPageCSP(nonce string) string {
+	return sourcesFor("/", nonce) + cspBase
+}
+
+// cspBase são as diretivas comuns a todas as políticas.
+const cspBase = "default-src 'self'; img-src 'self' data:; connect-src 'self'; " +
+	"base-uri 'none'; frame-ancestors 'none'; object-src 'none'"
+
+// cspFormAction limita para onde formulários podem enviar dados. Fica de fora
+// apenas da tela de senha (ver passwordPageCSP).
+const cspFormAction = "form-action 'self'"
+
+// sourcesFor devolve as diretivas de script/style, já com o terminador, para
+// a rota dada.
+//
+// Exceção: a UI do Swagger é servida por lib de terceiros, com inline que não
+// controlamos e não podemos carimbar. Ela recebe uma política relaxada apenas
+// nas rotas /swagger — desabilitável em produção via SWAGGER_ENABLED=false.
+func sourcesFor(path, nonce string) string {
 	if strings.HasPrefix(path, "/swagger") {
-		return "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " + base
+		return "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
 	}
 
 	if nonce == "" {
-		return "script-src 'self'; style-src 'self'; " + base
+		return "script-src 'self'; style-src 'self'; "
 	}
 
-	return "script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'nonce-" + nonce + "'; " + base
+	return "script-src 'self' 'nonce-" + nonce + "'; style-src 'self' 'nonce-" + nonce + "'; "
 }
 
 // generateNonce devolve 16 bytes aleatórios em base64 — valor de uso único

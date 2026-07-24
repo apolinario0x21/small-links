@@ -269,20 +269,84 @@ func TestAccessCookieIsBoundToShortID(t *testing.T) {
 
 // --- Submissão da senha ---
 
-func TestPasswordSubmitCorrectIssuesCookieAndRedirects(t *testing.T) {
+// A MESMA resposta ao envio da senha correta traz o Set-Cookie e o 302 para o
+// destino — navegador e cliente de API recebem o mesmo tratamento.
+//
+// Regressão: o 302 era emitido corretamente, mas o Chromium o abortava por
+// causa da diretiva `form-action 'self'` na CSP da tela de senha, que vale
+// para toda a cadeia de redirects do envio. O cookie chegava a ser gravado
+// (por isso o acesso seguinte funcionava) e o usuário ficava parado na tela.
+// A correção está em passwordPageCSP; ver TestPasswordPageCSPAllowsFormAction.
+func TestPasswordSubmitCorrectRedirectsWithCookie(t *testing.T) {
+	for _, accept := range []string{"text/html", ""} {
+		name := "navegador"
+		if accept == "" {
+			name = "cliente de API"
+		}
+		t.Run(name, func(t *testing.T) {
+			router, mock := setupTest(t)
+			expectProtectedLink(mock, "prot01", encrypt("https://www.example.com/destino"), testPasswordHash, nil, nil)
+			mock.ExpectExec(`UPDATE urls SET access_count = access_count \+ 1`).
+				WithArgs("prot01").WillReturnResult(sqlmock.NewResult(0, 1))
+
+			headers := map[string]string{}
+			if accept != "" {
+				headers["Accept"] = accept
+			}
+			w := postForm(router, "/prot01", "password="+testPassword, headers)
+
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want 302: %s", w.Code, w.Body.String())
+			}
+			if loc := w.Header().Get("Location"); loc != "https://www.example.com/destino" {
+				t.Errorf("Location = %q, want o destino", loc)
+			}
+			// O cookie precisa vir NESTA resposta: sem ele o acesso seguinte
+			// pediria a senha de novo.
+			assertAccessCookie(t, w, "prot01")
+			expectations(t, mock)
+		})
+	}
+}
+
+// A tela de senha não pode trazer `form-action 'self'`: o destino de um short
+// link é externo por definição, e o navegador aplica a diretiva a toda a
+// cadeia de redirects do envio do formulário.
+func TestPasswordPageCSPAllowsFormAction(t *testing.T) {
 	router, mock := setupTest(t)
 	expectProtectedLink(mock, "prot01", encrypt("https://www.example.com/destino"), testPasswordHash, nil, nil)
-	mock.ExpectExec(`UPDATE urls SET access_count = access_count \+ 1`).
-		WithArgs("prot01").WillReturnResult(sqlmock.NewResult(0, 1))
 
-	w := postForm(router, "/prot01", "password="+testPassword, nil)
+	w := getWithHeaders(router, "/prot01", map[string]string{"Accept": "text/html"})
 
-	if w.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302: %s", w.Code, w.Body.String())
+	csp := w.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "form-action") {
+		t.Errorf("CSP da tela de senha tem form-action e bloquearia o envio: %q", csp)
 	}
-	if loc := w.Header().Get("Location"); loc != "https://www.example.com/destino" {
-		t.Errorf("Location = %q", loc)
+	// O resto do endurecimento continua valendo nesta página.
+	for _, dir := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "'nonce-"} {
+		if !strings.Contains(csp, dir) {
+			t.Errorf("CSP da tela de senha sem %q: %q", dir, csp)
+		}
 	}
+	if strings.Contains(csp, "unsafe-inline") {
+		t.Errorf("CSP da tela de senha com unsafe-inline: %q", csp)
+	}
+	expectations(t, mock)
+}
+
+// As demais rotas mantêm form-action 'self'.
+func TestFormActionKeptOnOtherRoutes(t *testing.T) {
+	router, _ := securityRouter(t, Options{})
+
+	if csp := doRequest(router, http.MethodGet, "/").Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self'") {
+		t.Errorf("landing sem form-action 'self': %q", csp)
+	}
+}
+
+// assertAccessCookie confere que o cookie de acesso veio na resposta, é
+// utilizável na requisição seguinte (Path) e valida para este short_id.
+func assertAccessCookie(t *testing.T, w *httptest.ResponseRecorder, shortID string) {
+	t.Helper()
 
 	var cookie *http.Cookie
 	for _, ck := range w.Result().Cookies() {
@@ -291,21 +355,21 @@ func TestPasswordSubmitCorrectIssuesCookieAndRedirects(t *testing.T) {
 		}
 	}
 	if cookie == nil {
-		t.Fatal("cookie de acesso não emitido")
+		t.Fatal("cookie de acesso não emitido nesta resposta")
 	}
 	if !cookie.HttpOnly {
 		t.Error("cookie de acesso deve ser HttpOnly")
 	}
-	if cookie.Path != "/prot01" {
-		t.Errorf("cookie.Path = %q, want /prot01", cookie.Path)
+	// Path=/<shortId>: o navegador precisa enviá-lo no GET seguinte do link.
+	if cookie.Path != "/"+shortID {
+		t.Errorf("cookie.Path = %q, want /%s", cookie.Path, shortID)
 	}
 	if cookie.SameSite != http.SameSiteLaxMode {
 		t.Errorf("cookie.SameSite = %v, want Lax", cookie.SameSite)
 	}
-	if err := testCipher.VerifyAccessToken(cookie.Value, "prot01", time.Now()); err != nil {
+	if err := testCipher.VerifyAccessToken(cookie.Value, shortID, time.Now()); err != nil {
 		t.Errorf("cookie emitido não valida: %v", err)
 	}
-	expectations(t, mock)
 }
 
 func TestPasswordSubmitViaHeader(t *testing.T) {
