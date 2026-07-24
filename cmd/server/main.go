@@ -95,11 +95,26 @@ func run(logger *slog.Logger) error {
 		logger.Info("IP do cliente lido do header CF-Connecting-IP (borda Cloudflare confiável)")
 	}
 
-	server := httpapi.New(pg, cipher, recorder, checker, logger, cfg.SwaggerEnabled, cfg.TrustedPlatform)
+	if len(cfg.CORSAllowedOrigins) == 0 {
+		logger.Info("CORS_ALLOWED_ORIGINS não definida; cross-origin permitido apenas para a própria origem da aplicação")
+	}
 
+	server := httpapi.New(pg, cipher, recorder, checker, logger, httpapi.Options{
+		SwaggerEnabled:     cfg.SwaggerEnabled,
+		TrustedPlatform:    cfg.TrustedPlatform,
+		CORSAllowedOrigins: cfg.CORSAllowedOrigins,
+		ReleaseMode:        gin.Mode() == gin.ReleaseMode,
+	})
+
+	// Timeouts explícitos: sem ReadHeaderTimeout uma conexão que envia
+	// headers byte a byte segura um worker indefinidamente (Slowloris).
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: server.Router(),
+		Addr:              ":" + cfg.Port,
+		Handler:           server.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

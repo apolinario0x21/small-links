@@ -1,0 +1,30 @@
+version: "2"
+
+linters:
+  enable:
+    - bodyclose
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    errcheck:
+      # Fechar recurso em defer e escrever no ResponseWriter são casos em que
+      # não há ação útil sobre o erro; checá-los só adiciona ruído.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (io.ReadCloser).Close
+        - (net/http.ResponseWriter).Write
+        - (*github.com/apolinario0x21/small-links/internal/geo.Resolver).Close
+
+  exclusions:
+    rules:
+      # docs/ é gerado pelo swag — não é código que mantemos à mão.
+      - path: ^docs/
+        linters:
+          - staticcheck
+          - unused

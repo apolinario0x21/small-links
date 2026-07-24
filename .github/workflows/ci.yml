@@ -10,9 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # go-version-file instalaria EXATAMENTE a versão da linha `go` do go.mod
+      # (1.25.0), cuja stdlib acumula CVEs já corrigidos nos patches — o
+      # govulncheck acusa dezenas deles. Pinar a linha 1.25.x com check-latest
+      # garante sempre o último patch.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
 
       - name: gofmt
         run: |
@@ -31,3 +36,37 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+      # Detector de corrida: o Recorder de cliques roda em worker próprio.
+      - name: go test -race
+        run: go test -race ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # go-version-file instalaria EXATAMENTE a versão da linha `go` do go.mod
+      # (1.25.0), cuja stdlib acumula CVEs já corrigidos nos patches — o
+      # govulncheck acusa dezenas deles. Pinar a linha 1.25.x com check-latest
+      # garante sempre o último patch.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+
+      # A ação v8 é a que instala a linha v2 do golangci-lint — a v6 resolve
+      # "latest" para a v1, que não lê o .golangci.yml (version: "2") e é
+      # compilada com Go 1.24, abaixo do go.mod (1.25).
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
+      # Vulnerabilidades conhecidas nas dependências.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      # Padrões inseguros no código (docs/ é gerado pelo swag).
+      - name: gosec
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude-dir=docs ./...

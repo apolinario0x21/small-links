@@ -10,6 +10,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Observabilidade local (dev): `docker compose -f docker-compose.observability.yml up -d`
 - Testes: `go test ./...`
 - Verificações: `gofmt -l .` e `go vet ./...`
+- Segurança: `make security-check` (govulncheck + gosec); corrida: `make race` (`go test -race`)
 - Dependências: `go mod tidy`
 - Regenerar docs OpenAPI: `swag init -g cmd/server/main.go --parseInternal -o docs` (após mudar anotações)
 - **Sem Go instalado na máquina local** — rodar a sequência do CI via Docker antes de commitar:
@@ -30,6 +31,7 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 | SAFE_BROWSING_API_KEY | Não  | Chave da Google Safe Browsing; vazia desabilita a verificação |
 | GEOIP_DB_PATH  | Não         | Base MMDB DB-IP Lite (padrão /app/dbip-country-lite.mmdb); ausente = sem geo |
 | TRUSTED_PLATFORM | Não       | Fonte do IP do cliente: vazio = proxies de faixa privada (local); `cloudflare` = header CF-Connecting-IP (Render/produção) |
+| CORS_ALLOWED_ORIGINS | Não  | Allowlist de origens cross-origin, separada por vírgula; vazia = só a própria origem da aplicação |
 
 ## Arquitetura
 
@@ -44,6 +46,7 @@ internal/geo/        → resolução IP→país via MMDB local (DB-IP Lite)
 internal/metrics/    → coletores Prometheus (counters + histograma de latência)
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
 internal/http/static/→ landing page (index.html) embutida via go:embed, servida em GET /
+internal/logging/     → RedactURL: redação de query params sensíveis antes de logar URLs
 docs/                → OpenAPI gerado pelo swag (docs.go/swagger.json/yaml); importado no main
 migrations/          → SQL versionado, aplicado via go:embed na inicialização
 ```
@@ -202,6 +205,53 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   postura de privacidade do projeto. **Sem alteração de backend** — só o `index.html` embutido;
   toda inserção de dados da API/localStorage no DOM é via `textContent`/atributos (nunca
   `innerHTML`).
+- **CORS restritivo (endurecimento)**: o `Access-Control-Allow-Origin: *` foi substituído por
+  allowlist via `CORS_ALLOWED_ORIGINS` (separada por vírgula; `*` é ignorado). **Decisões**:
+  (a) **sem a env, só a própria origem** (scheme + Host da requisição) — cobre a landing embutida
+  sem autorizar terceiros e não exige configuração no deploy atual; (b) **origem fora da lista não
+  é bloqueada**, apenas não recebe headers CORS — quem impõe a restrição é o navegador, e abortar
+  aqui quebraria curl/server-to-server sem ganho de segurança; (c) `Authorization` entra em
+  `Allow-Headers` (e `DELETE` em `Allow-Methods`) **só para origens permitidas**, porque
+  `DELETE /api/links/:shortId` usa Bearer — sem isso o botão "excluir" da landing morre no
+  preflight; (d) `Vary: Origin`, senão um cache compartilhado serve os headers de uma origem para
+  outra. A config do servidor virou a struct `http.Options` (o `New` já tinha 7 parâmetros).
+- **Headers de segurança + CSP com nonce**: `securityHeadersMiddleware` aplica `nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` e CSP em toda
+  resposta; `Strict-Transport-Security` só em `ReleaseMode` (em dev sobre http ele travaria o
+  navegador do desenvolvedor). **Decisão — nonce, não 'unsafe-inline'**: a landing é HTML embutido
+  com CSS/JS inline; liberar `'unsafe-inline'` reabriria XSS refletido, então o middleware gera um
+  nonce por requisição (16 bytes, `crypto/rand`), publica no contexto (`cspNonceKey`) e o
+  `landingHandler` carimba `<style>`/`<script>` com o mesmo valor (cópia de ~30 KB por requisição,
+  custo irrelevante). **Exceção**: `/swagger` recebe política relaxada — o inline vem de lib de
+  terceiros e não é carimbável (rota desabilitável em produção).
+- **Redação de URL em log (`internal/logging.RedactURL`)**: valores dos query params `token`,
+  `auth`, `password`, `api_key`, `secret`, `access_token` (case-insensitive) viram `REDACTED`
+  antes de qualquer URL original ir para o logger. URL inparseável vira `[unparseable-url]` e
+  query malformada é redigida por inteiro — **não conseguindo localizar o segredo, prefere-se
+  perder informação a vazá-lo**. Nenhum corpo de requisição é logado.
+- **Ferramentas de segurança no CI**: job `security` separado com `golangci-lint`, `govulncheck`
+  e `gosec` (`-exclude-dir=docs`, gerado pelo swag), além de `go test -race` no job de build.
+  `.golangci.yml` (v2) habilita errcheck/staticcheck/bodyclose/ineffassign/unused, com
+  `exclude-functions` para `Close`/`Write` em defer — checá-los só gera ruído. `make check` passou
+  a incluir `security-check`. **Correção do gosec**: `G112` — o `http.Server` não tinha
+  `ReadHeaderTimeout`, então uma conexão enviando headers byte a byte segurava um worker
+  indefinidamente (Slowloris); adicionados Read/Write/Idle/ReadHeader timeouts.
+- **Auditoria de dependências (jul/2026)**: `go get -u ./...` + `go mod tidy` subiram gin 1.10.1→
+  1.12.0, lib/pq 1.10.9→1.12.3, prometheus/client_golang 1.23.2→1.24.0 e as indiretas.
+  `govulncheck`: **0 vulnerabilidades chamadas pelo código** (1 vulnerabilidade em módulo
+  requerido, sem símbolo alcançável). `gosec`: 1 achado (G112, corrigido acima) — hoje limpo.
+  `swaggo/swag` foi mantido em v1.16.6 de propósito: a versão da lib precisa casar com a do CLI
+  que gerou `docs/`.
+  **Patch do toolchain importa tanto quanto as libs (bug de CI corrigido)**: com
+  `go-version-file: go.mod` o runner instalava **exatamente go1.25.0**, e o govulncheck acusou
+  **29 CVEs da stdlib** — todos já corrigidos até o go1.25.12 (o container `golang:1.25-alpine`
+  usado localmente já vinha patchado, por isso o local passava e o CI não). Correção: `go.mod`
+  ganhou `toolchain go1.25.12` e o CI usa `go-version: 1.25.x` + `check-latest: true`, para o
+  patch mais recente entrar sozinho. **Lição**: fixar a linha `go` não é o mesmo que fixar o
+  toolchain — a stdlib é uma dependência como qualquer outra.
+- **golangci-lint no CI**: usar `golangci/golangci-lint-action@v8` (linha v2 do linter, versão
+  pinada). A `@v6` resolve `latest` para a v1, que não lê o `.golangci.yml` em `version: "2"` e
+  é compilada com Go 1.24 — abaixo do `go.mod`, o que aborta o carregamento da config.
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +

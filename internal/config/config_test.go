@@ -57,3 +57,43 @@ func TestLoadExplicitPort(t *testing.T) {
 		t.Errorf("Port = %q, want 9000", cfg.Port)
 	}
 }
+
+func TestLoadCORSAllowedOrigins(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"vazia", "", nil},
+		{"uma origem", "https://app.exemplo.com", []string{"https://app.exemplo.com"}},
+		{
+			"várias com espaços",
+			" https://a.exemplo.com , https://b.exemplo.com ",
+			[]string{"https://a.exemplo.com", "https://b.exemplo.com"},
+		},
+		// O curinga é ignorado: reabrir para qualquer origem é exatamente o
+		// que a allowlist existe para impedir.
+		{"curinga ignorado", "*", nil},
+		{"entradas vazias descartadas", "https://a.exemplo.com,,", []string{"https://a.exemplo.com"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			setEnv(t, validKey, "postgres://x", "")
+			t.Setenv("CORS_ALLOWED_ORIGINS", tc.raw)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if len(cfg.CORSAllowedOrigins) != len(tc.want) {
+				t.Fatalf("CORSAllowedOrigins = %v, want %v", cfg.CORSAllowedOrigins, tc.want)
+			}
+			for i, want := range tc.want {
+				if cfg.CORSAllowedOrigins[i] != want {
+					t.Errorf("CORSAllowedOrigins[%d] = %q, want %q", i, cfg.CORSAllowedOrigins[i], want)
+				}
+			}
+		})
+	}
+}
