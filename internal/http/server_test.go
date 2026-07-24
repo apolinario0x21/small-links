@@ -109,7 +109,7 @@ func expectations(t *testing.T, mock sqlmock.Sqlmock) {
 
 // dedupQueryRegex casa a consulta de dedup inteira, incluindo o filtro que
 // ignora registros expirados (dedup não pode devolver link morto).
-const dedupQueryRegex = `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1 AND deleted_at IS NULL AND \(expires_at IS NULL OR expires_at > now\(\)\)`
+const dedupQueryRegex = `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = \$1 AND deleted_at IS NULL AND password_hash IS NULL AND \(expires_at IS NULL OR expires_at > now\(\)\)`
 
 // expectNoDedup registra a consulta de dedup por url_hash sem resultado.
 func expectNoDedup(mock sqlmock.Sqlmock) {
@@ -691,10 +691,10 @@ func TestMetricsEndpoint(t *testing.T) {
 func TestQRCodeSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("abc123").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("abc123", encrypt("https://www.example.com"), 0, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("abc123", encrypt("https://www.example.com"), 0, nil, nil, nil))
 
 	w := doRequest(router, http.MethodGet, "/qr/abc123")
 
@@ -714,9 +714,9 @@ func TestQRCodeSuccess(t *testing.T) {
 func TestQRCodeNotFound(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("naoexi").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}))
 
 	w := doRequest(router, http.MethodGet, "/qr/naoexi")
 
@@ -822,10 +822,10 @@ func TestRedirectDeletedReturnsGone(t *testing.T) {
 	router, mock := setupTest(t)
 
 	deleted := time.Now().Add(-time.Hour)
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("morto").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("morto", encrypt("https://www.example.com"), 5, nil, deleted))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("morto", encrypt("https://www.example.com"), 5, nil, deleted, nil))
 
 	w := doRequest(router, http.MethodGet, "/morto")
 	if w.Code != http.StatusGone {
@@ -843,10 +843,10 @@ func TestQRCodeDeletedReturnsGone(t *testing.T) {
 	router, mock := setupTest(t)
 
 	deleted := time.Now().Add(-time.Hour)
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("morto").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("morto", encrypt("https://www.example.com"), 0, nil, deleted))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("morto", encrypt("https://www.example.com"), 0, nil, deleted, nil))
 
 	w := doRequest(router, http.MethodGet, "/qr/morto")
 	if w.Code != http.StatusGone {
@@ -890,10 +890,10 @@ func TestRedirectSuccess(t *testing.T) {
 	router, mock := setupTest(t)
 
 	encrypted := encrypt("https://www.example.com/destino")
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("abc123").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("abc123", encrypted, 7, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("abc123", encrypted, 7, nil, nil, nil))
 	mock.ExpectExec(`UPDATE urls SET access_count = access_count \+ 1 WHERE short_id = \$1`).
 		WithArgs("abc123").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -912,9 +912,9 @@ func TestRedirectSuccess(t *testing.T) {
 func TestRedirectNotFound(t *testing.T) {
 	router, mock := setupTest(t)
 
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("naoexi").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}))
 
 	w := doRequest(router, http.MethodGet, "/naoexi")
 
@@ -933,10 +933,10 @@ func TestRedirectExpiredReturnsGone(t *testing.T) {
 
 	encrypted := encrypt("https://www.example.com")
 	past := time.Now().Add(-1 * time.Hour)
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("expira").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("expira", encrypted, 3, past, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("expira", encrypted, 3, past, nil, nil))
 
 	w := doRequest(router, http.MethodGet, "/expira")
 
@@ -956,10 +956,10 @@ func TestRedirectNotYetExpired(t *testing.T) {
 
 	encrypted := encrypt("https://www.example.com/futuro")
 	future := time.Now().Add(24 * time.Hour)
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = \$1`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = \$1`).
 		WithArgs("valido").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("valido", encrypted, 0, future, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("valido", encrypted, 0, future, nil, nil))
 	mock.ExpectExec(`UPDATE urls SET access_count`).
 		WithArgs("valido").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -1010,10 +1010,10 @@ func TestRedirectUpdateFailureStillRedirects(t *testing.T) {
 	router, mock := setupTest(t)
 
 	encrypted := encrypt("https://www.example.com")
-	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls`).
+	mock.ExpectQuery(`SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls`).
 		WithArgs("abc123").
-		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at"}).
-			AddRow("abc123", encrypted, 0, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"short_id", "original_url", "access_count", "expires_at", "deleted_at", "password_hash"}).
+			AddRow("abc123", encrypted, 0, nil, nil, nil))
 	mock.ExpectExec(`UPDATE urls SET access_count`).
 		WithArgs("abc123").
 		WillReturnError(errTest)

@@ -112,7 +112,10 @@ func (s *Server) Router() *gin.Engine {
 		corsMiddleware(s.opts.CORSAllowedOrigins),
 	)
 
-	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
+	createLimiter := newKeyRateLimiter(rateLimitPerMinute, rateLimitBurst).byIP()
+	// Anti-força-bruta das tentativas de senha: chave é o short_id (o alvo),
+	// não o IP — a força bruta contra um link é distribuível entre IPs.
+	passwordLimiter := newKeyRateLimiter(passwordRatePerMinute, passwordRateBurst).byShortID()
 
 	// Landing page na raiz. Não conflita com o catch-all /:shortId (rota
 	// estática "/" vs. param de um segmento) nem com os aliases (o regex de
@@ -134,6 +137,7 @@ func (s *Server) Router() *gin.Engine {
 	}
 
 	router.GET("/:shortId", s.redirectHandler)
+	router.POST("/:shortId", passwordLimiter, s.passwordHandler)
 
 	return router
 }
@@ -234,6 +238,10 @@ type ShortenRequest struct {
 	URL           string `json:"url" example:"https://www.exemplo.com/pagina"`
 	CustomAlias   string `json:"custom_alias,omitempty" example:"promo"`
 	ExpiresInDays *int   `json:"expires_in_days,omitempty" example:"30"`
+	// Password protege o link: o acesso passa a exigir a senha. Mínimo de 4
+	// caracteres. Nunca é devolvida em resposta alguma (o cliente recebe
+	// apenas has_password).
+	Password string `json:"password,omitempty" example:"segredo123"`
 }
 
 // shortenHandler mantém o contrato legado: GET /shorten?url=... com 200.
@@ -256,7 +264,7 @@ func (s *Server) shortenHandler(c *gin.Context) {
 		return
 	}
 
-	s.createShortURL(c, originalUrl, "", nil, http.StatusOK, false)
+	s.createShortURL(c, originalUrl, "", nil, "", http.StatusOK, false)
 }
 
 // apiShortenHandler é a variante nova: POST /api/shorten com body JSON e 201.
@@ -290,10 +298,27 @@ func (s *Server) apiShortenHandler(c *gin.Context) {
 		expiresAt = &t
 	}
 
-	s.createShortURL(c, req.URL, req.CustomAlias, expiresAt, http.StatusCreated, true)
+	// A senha vira bcrypt aqui; a partir deste ponto a senha em claro não é
+	// mais tocada — nunca é logada, persistida nem devolvida.
+	var passwordHash string
+	if req.Password != "" {
+		hash, err := crypto.HashPassword(req.Password)
+		if err != nil {
+			if errors.Is(err, crypto.ErrPasswordTooShort) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			s.logger.Error("failed to hash password", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to shorten URL"})
+			return
+		}
+		passwordHash = hash
+	}
+
+	s.createShortURL(c, req.URL, req.CustomAlias, expiresAt, passwordHash, http.StatusCreated, true)
 }
 
-func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expiresAt *time.Time, successStatus int, includeShortID bool) {
+func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expiresAt *time.Time, passwordHash string, successStatus int, includeShortID bool) {
 	if err := validateURL(originalUrl, c.Request.Host); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -317,7 +342,8 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 
 	urlHash := s.cipher.Hash(originalUrl)
 
-	if alias != "" {
+	switch {
+	case alias != "":
 		// Alias explícito: valida o formato e as rotas reservadas antes de
 		// tentar gravar. Não passa por dedup — o usuário quer este alias.
 		if !aliasRegex.MatchString(alias) {
@@ -328,7 +354,15 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			c.JSON(http.StatusConflict, gin.H{"error": "custom_alias is reserved"})
 			return
 		}
-	} else {
+
+	case passwordHash != "":
+		// Link COM SENHA nunca reaproveita um existente: o dedup só enxerga
+		// links públicos, e devolver um deles entregaria um link DESPROTEGIDO
+		// a quem pediu proteção. O outro sentido do mesmo critério vive na
+		// query de FindByURLHash, que ignora os protegidos — assim quem
+		// encurta sem senha jamais recebe um link que não conseguiria abrir.
+
+	default:
 		// Dedup: se a URL já foi encurtada, reaproveita o short_id existente.
 		if existing, err := s.repo.FindByURLHash(c.Request.Context(), urlHash); err == nil {
 			scheme := getScheme(c)
@@ -337,6 +371,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 				"short_url":    scheme + "://" + c.Request.Host + "/" + existing.ShortID,
 				"created_at":   existing.CreatedAt,
 				"existing":     true,
+				"has_password": false,
 			}
 			if includeShortID {
 				response["short_id"] = existing.ShortID
@@ -376,6 +411,8 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			"short_url":        scheme + "://" + c.Request.Host + "/" + shortId,
 			"created_at":       createdAt,
 			"management_token": managementToken,
+			// Só o booleano: nem a senha nem o hash saem daqui.
+			"has_password": passwordHash != "",
 		}
 		if includeShortID {
 			response["short_id"] = shortId
@@ -389,7 +426,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 
 	// Alias fixo: uma única tentativa; colisão vira 409 Conflict.
 	if alias != "" {
-		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash}
+		urlData := storage.URLData{ShortID: alias, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash, PasswordHash: passwordHash}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(alias, urlData.CreatedAt)
@@ -416,7 +453,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 			return
 		}
 
-		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash}
+		urlData := storage.URLData{ShortID: shortId, OriginalURL: encryptedURL, URLHash: urlHash, CreatedAt: time.Now(), ExpiresAt: expiresAt, ManagementTokenHash: tokenHash, PasswordHash: passwordHash}
 		switch err := s.repo.Insert(c.Request.Context(), urlData); {
 		case err == nil:
 			writeSuccess(shortId, urlData.CreatedAt)
@@ -508,11 +545,12 @@ func (s *Server) deleteHandler(c *gin.Context) {
 
 // redirectHandler resolve o short link e redireciona para a URL original.
 // @Summary      Redireciona um short link
-// @Description  Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado.
+// @Description  Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado. Link protegido por senha sem cookie de acesso responde a tela de senha (Accept: text/html) ou 401 JSON.
 // @Tags         redirect
 // @Produce      json
 // @Param        shortId  path  string  true  "Identificador do short link"
 // @Success      302  "Redirect para a URL original"
+// @Failure      401  {object}  ErrorResponse  "Link protegido por senha"
 // @Failure      404  {object}  ErrorResponse
 // @Failure      410  {object}  ErrorResponse  "Link expirado ou desativado"
 // @Failure      500  {object}  ErrorResponse
@@ -520,52 +558,20 @@ func (s *Server) deleteHandler(c *gin.Context) {
 func (s *Server) redirectHandler(c *gin.Context) {
 	shortId := c.Param("shortId")
 
-	urlData, err := s.repo.FindForRedirect(c.Request.Context(), shortId)
-	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Short URL not found"})
-			return
-		}
-		s.logger.Error("failed to query DB", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+	// Inexistente/deletado/expirado são resolvidos aqui, ANTES da senha.
+	urlData, ok := s.loadRedirectTarget(c, shortId)
+	if !ok {
 		return
 	}
 
-	if urlData.DeletedAt != nil {
-		c.JSON(http.StatusGone, gin.H{"error": "Short URL has been deleted"})
+	// Link protegido sem cookie de acesso válido não redireciona: pede a
+	// senha. O destino não aparece em lugar nenhum da resposta.
+	if urlData.PasswordHash != "" && !s.hasAccess(c, shortId) {
+		s.renderPasswordPage(c, shortId, "", http.StatusOK)
 		return
 	}
 
-	if urlData.ExpiresAt != nil && time.Now().After(*urlData.ExpiresAt) {
-		c.JSON(http.StatusGone, gin.H{"error": "Short URL has expired"})
-		return
-	}
-
-	if err := s.repo.IncrementAccessCount(c.Request.Context(), shortId); err != nil {
-		s.logger.Warn("failed to update access count", "error", err)
-	}
-
-	decrypted, err := s.cipher.Decrypt(urlData.OriginalURL)
-	if err != nil {
-		s.logger.Error("failed to decrypt URL", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt URL"})
-		return
-	}
-
-	c.Redirect(http.StatusFound, decrypted)
-	metrics.RedirectsTotal.Inc()
-
-	// Registra o clique após responder o 302; o Record é não-bloqueante.
-	// O IP segue em claro apenas dentro do processo: o Recorder resolve o
-	// país e gera o ip_hash, sem jamais persistir o IP (ver nota LGPD).
-	if s.recorder != nil {
-		s.recorder.Record(analytics.Click{
-			ShortID:   shortId,
-			Referrer:  c.Request.Referer(),
-			UserAgent: c.Request.UserAgent(),
-			IP:        c.ClientIP(),
-		})
-	}
+	s.completeRedirect(c, urlData)
 }
 
 // statsHandler devolve estatísticas de acesso de um short link.

@@ -28,3 +28,21 @@ func TestCountryCodeNilResolverIsSafe(t *testing.T) {
 		t.Errorf("resolver nil deve devolver \"\", got %q", got)
 	}
 }
+
+// Close em resolver sem base aberta não pode entrar em pânico: o app sobe
+// mesmo sem MMDB e o defer do bootstrap chama Close assim mesmo.
+func TestCloseWithoutDatabaseIsSafe(t *testing.T) {
+	r := &Resolver{}
+	if err := r.Close(); err != nil {
+		t.Errorf("Close() = %v, want nil", err)
+	}
+}
+
+// IP público válido sem base carregada devolve "" (e não erro): a
+// geolocalização é opcional por definição.
+func TestCountryCodePublicIPWithoutDatabase(t *testing.T) {
+	r := &Resolver{}
+	if got := r.CountryCode("203.0.113.5"); got != "" {
+		t.Errorf("CountryCode() = %q, want \"\"", got)
+	}
+}

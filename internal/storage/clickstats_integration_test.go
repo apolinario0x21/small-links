@@ -2,11 +2,7 @@ package storage_test
 
 import (
 	"context"
-	"database/sql"
-	"os"
 	"testing"
-
-	_ "github.com/lib/pq"
 
 	"github.com/apolinario0x21/small-links/internal/storage"
 )
@@ -20,20 +16,7 @@ import (
 // Gated por SMALL_LINKS_TEST_DATABASE_URL; sem a env var o teste é pulado para
 // não quebrar o CI que roda apenas `go test` sem banco.
 func TestClickStatsAggregationsShareExclusionCriteria(t *testing.T) {
-	dsn := os.Getenv("SMALL_LINKS_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("SMALL_LINKS_TEST_DATABASE_URL não definido; pulando teste de integração")
-	}
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("abrir conexão: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		t.Fatalf("ping no banco: %v", err)
-	}
+	db := openTestDB(t)
 
 	if err := storage.Migrate(db); err != nil {
 		t.Fatalf("aplicar migrations: %v", err)

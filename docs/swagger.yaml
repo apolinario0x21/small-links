@@ -62,6 +62,13 @@ definitions:
       expires_in_days:
         example: 30
         type: integer
+      password:
+        description: |-
+          Password protege o link: o acesso passa a exigir a senha. Mínimo de 4
+          caracteres. Nunca é devolvida em resposta alguma (o cliente recebe
+          apenas has_password).
+        example: segredo123
+        type: string
       url:
         example: https://www.exemplo.com/pagina
         type: string
@@ -77,6 +84,12 @@ definitions:
       expires_at:
         example: "2026-08-09T12:00:00Z"
         type: string
+      has_password:
+        description: |-
+          HasPassword indica se o link exige senha para abrir. A senha e seu
+          hash nunca aparecem em resposta alguma.
+        example: false
+        type: boolean
       management_token:
         description: |-
           ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova
@@ -154,8 +167,9 @@ paths:
       - landing
   /{shortId}:
     get:
-      description: Responde 302 para a URL original. 404 se inexistente, 410 se expirado
-        ou deletado.
+      description: 'Responde 302 para a URL original. 404 se inexistente, 410 se expirado
+        ou deletado. Link protegido por senha sem cookie de acesso responde a tela
+        de senha (Accept: text/html) ou 401 JSON.'
       parameters:
       - description: Identificador do short link
         in: path
@@ -167,6 +181,10 @@ paths:
       responses:
         "302":
           description: Redirect para a URL original
+        "401":
+          description: Link protegido por senha
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
         "404":
           description: Not Found
           schema:
@@ -180,6 +198,54 @@ paths:
           schema:
             $ref: '#/definitions/http.ErrorResponse'
       summary: Redireciona um short link
+      tags:
+      - redirect
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Aceita `password` via form ou header `X-Password`. Senha correta
+        emite cookie de acesso assinado (1h, HttpOnly, Path do link) e responde 302
+        para a URL original. Limitado a 5 tentativas por minuto POR LINK.
+      parameters:
+      - description: Identificador do short link
+        in: path
+        name: shortId
+        required: true
+        type: string
+      - description: Senha do link
+        in: formData
+        name: password
+        type: string
+      - description: Senha do link (alternativa ao form)
+        in: header
+        name: X-Password
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Redirect para a URL original
+        "401":
+          description: Senha ausente ou incorreta
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "404":
+          description: Link inexistente ou sem senha
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "410":
+          description: Link expirado ou desativado
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "429":
+          description: Tentativas excedidas para este link
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/http.ErrorResponse'
+      summary: Envia a senha de um link protegido
       tags:
       - redirect
   /api/links/{shortId}:
@@ -346,9 +412,9 @@ paths:
     get:
       description: Retorna access_count, total_clicks, clicks_per_day (30 dias), top_referrers
         (top 5), top_countries e devices. Bots (is_bot) ficam fora de todas as agregações;
-        país/device não classificado aparece como "unknown". top_countries lista todos os
-        países (sem top-5), de modo que a soma de top_countries e a soma de devices batem
-        com total_clicks.
+        país/device não classificado aparece como "unknown". top_countries lista todos
+        os países (sem top-5), de modo que a soma de top_countries e a soma de devices
+        batem com total_clicks.
       parameters:
       - description: Identificador do short link
         in: path

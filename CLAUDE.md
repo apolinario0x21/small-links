@@ -8,7 +8,9 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Rodar local: `go run ./cmd/server` (exige `ENCRYPTION_KEY` de 32 chars e `DATABASE_URL`)
 - Subir tudo: `docker compose up --build`
 - Observabilidade local (dev): `docker compose -f docker-compose.observability.yml up -d`
-- Testes: `go test ./...`
+- Testes: `go test ./...` (unidade; os de integração se auto-pulam sem banco)
+- Testes de integração (Postgres real): `make test-integration
+  SMALL_LINKS_TEST_DATABASE_URL='postgres://...'` — roda com `-p 1 -count=1`
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Segurança: `make security-check` (govulncheck + gosec); corrida: `make race` (`go test -race`)
 - Dependências: `go mod tidy`
@@ -47,6 +49,7 @@ internal/metrics/    → coletores Prometheus (counters + histograma de latênci
 internal/http/       → handlers via struct, middleware CORS/métricas, rate limiting por IP, rotas
 internal/http/static/→ landing page (index.html) embutida via go:embed, servida em GET /
 internal/logging/     → RedactURL: redação de query params sensíveis antes de logar URLs
+internal/http/static/→ password.html: tela de senha (template) de link protegido, também embutida
 docs/                → OpenAPI gerado pelo swag (docs.go/swagger.json/yaml); importado no main
 migrations/          → SQL versionado, aplicado via go:embed na inicialização
 ```
@@ -197,6 +200,39 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   do DELETE igual ao da criação. **Nota sobre o 404**: os requisitos listavam 404 para short_id
   inexistente, mas isso colide com o requisito crítico de não vazar existência via token inválido
   — optou-se por **403 uniforme** (os testes cobrem exatamente isso; não há teste de 404).
+- **Links protegidos por senha (migration 008)**: `password` opcional no POST (mín. 4 chars) vira
+  **bcrypt custo 12** em `urls.password_hash`; a senha em claro nunca é persistida, logada nem
+  devolvida — o cliente recebe apenas `has_password`. **Decisões**: (a) **bcrypt custo 12** (e não
+  o default 10): a senha de link é curta e é o único segredo que protege o destino, então
+  encarecer cada verificação (~200ms) é a defesa para o caso de o hash vazar; o custo é aceitável
+  num fluxo interativo, mas obriga os testes a gerar **um** hash reaproveitado. (b) **Protegidos
+  ficam fora do dedup nos DOIS sentidos** — criar com senha nunca reaproveita um link existente
+  (todo link reaproveitável é público: devolvê-lo entregaria um link **desprotegido** a quem pediu
+  proteção) e `FindByURLHash` filtra `password_hash IS NULL` (senão quem encurta **sem** senha
+  receberia um link que **não conseguiria abrir**). É o mesmo critério de exclusão já aplicado a
+  expirados e deletados. (c) **Cookie assinado de 1h**, não sessão em banco: `HMAC-SHA256` com a
+  `ENCRYPTION_KEY` sobre `<short_id em base64>.<exp unix>`, verificado com
+  `subtle.ConstantTimeCompare`. O **short_id vai dentro do payload assinado** — sem isso o cookie
+  de um link abriria outro. `HttpOnly`, `Secure` em release, `SameSite=Lax` e `Path=/<shortId>`
+  (o navegador nem envia o cookie para outros links). Sem estado no servidor, coerente com a
+  postura de "autorização por posse de segredo, sem contas" do token de gerenciamento.
+  (d) **Precedência: expiração e soft delete ANTES da senha** — link morto responde 410 sem nunca
+  exibir a tela de senha (pedir senha de algo que não vai abrir é ruído e vaza que o link existiu
+  em estado utilizável). A ordem vive num único ponto, `loadRedirectTarget`, compartilhado por
+  GET e POST. (e) **A tela de senha jamais contém a URL de destino** — é um `html/template`
+  embutido (`static/password.html`) que recebe só nonce, action e mensagem de erro; há teste
+  assertando a ausência do destino no HTML. (f) **Negociação por Accept**: `text/html` → tela;
+  qualquer outro → `401 {"error":"link protegido por senha"}`. (g) **Rate limit por SHORT_ID**
+  (5/min), não por IP: força bruta contra um link é distribuível entre IPs, então o alvo é a
+  chave certa — o `ipRateLimiter` virou `keyRateLimiter` com `byIP()` e `byShortID()`. Métricas
+  `smalllinks_password_attempts_total` e `smalllinks_password_failures_total`.
+  (h) **Analytics só no redirect concluído**: exibir a tela de senha não gera clique
+  (`completeRedirect` é o único ponto que registra).
+  **Armadilha nos testes**: o custo 12 torna cada verificação lenta (segundos sob `-race`), e um
+  teste que fazia N tentativas erradas para provar o 429 **falhava intermitentemente** — as
+  tentativas demoravam tanto que o limiter recarregava tokens no meio do laço. O teste passou a
+  usar um short_id inexistente (o limiter roda antes do handler, sem custo de bcrypt).
+  **Lição**: asserção sobre rate limit não pode depender de operações lentas dentro da janela.
 - **Histórico de links (client-side)**: a landing guarda os links criados no `localStorage`
   (`small-links:history`, máx. 20, dedup por `short_id`, mais recente no topo) e enriquece cada
   item com a contagem de cliques via `GET /stats/:shortId` (404/410 esmaece o item; erro de rede
@@ -252,6 +288,30 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - **golangci-lint no CI**: usar `golangci/golangci-lint-action@v8` (linha v2 do linter, versão
   pinada). A `@v6` resolve `latest` para a v1, que não lê o `.golangci.yml` em `version: "2"` e
   é compilada com Go 1.24 — abaixo do `go.mod`, o que aborta o carregamento da config.
+- **Duas camadas de teste**: unidade (handlers com `go-sqlmock`, cifragem, cookie, CORS,
+  redação, rate limiting) e **integração contra Postgres real** — `internal/storage/
+  postgres_integration_test.go` (repositório) e `internal/http/api_integration_test.go` (API
+  ponta a ponta, com `httptest.Server` sobre o router de produção, repositório real e Recorder
+  real). **Decisões**: (a) **integração de verdade, não sqlmock, para o que vive no SQL** — o
+  critério de exclusão do dedup, o `NULLIF`, o mapeamento de `unique_violation`/
+  `string_data_right_truncation` e o soft delete que impede reciclagem de short_id só podem ser
+  confirmados por um banco; contra mock, o teste apenas repetiria a string da query que eu mesmo
+  escrevi. (b) **Auto-skip por `SMALL_LINKS_TEST_DATABASE_URL`** — `go test ./...` continua verde
+  sem banco (e o job padrão do CI segue rápido); o job `integration` do CI provê o Postgres como
+  service. (c) **`-p 1` obrigatório na integração**: os dois pacotes dão `TRUNCATE` nas mesmas
+  tabelas e o Go paraleliza pacotes por padrão. Sem `-p 1` passou nas execuções que fiz, mas o
+  isolamento não é garantido — é corrida latente, e serializar custa segundos. (d) **`-count=1`**:
+  cache de teste não enxerga mudança de estado no banco. (e) **Analytics é assíncrono**, então a
+  asserção sobre cliques só vem depois de `Recorder.Close()` (flush) — sem isso o teste seria
+  uma corrida com o worker. Cobertura total foi de **67,2% → 88,8%** (`internal/storage` saiu de
+  0%, pois só tinha caminho de banco). (f) **Clientes de teste com `DisableKeepAlives`**:
+  `httptest.Server.Close()` bloqueia enquanto houver conexão aberta, e cada cliente deixava a sua
+  ociosa no pool — o pacote gastava **~40s de espera pura no teardown**, sem teste algum rodando
+  (4,3s depois da correção). (g) **Asserção de rate limit não fixa o número da tentativa**: sob
+  `-race` o bcrypt custa segundos e o limiter recarrega no meio do laço, então o teste tenta até
+  20 vezes e exige que o 429 apareça — o consumo é mais rápido que a recarga, logo é inevitável,
+  mas *em qual* tentativa depende da máquina. Mesma lição já registrada nos testes de unidade:
+  **asserção sobre rate limit não pode depender de operação lenta dentro da janela**.
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +

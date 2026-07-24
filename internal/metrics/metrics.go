@@ -44,6 +44,19 @@ var (
 		Help: "Total de links desativados (soft delete) por token.",
 	})
 
+	// PasswordAttemptsTotal conta tentativas de senha em link protegido.
+	PasswordAttemptsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_password_attempts_total",
+		Help: "Total de tentativas de senha em links protegidos.",
+	})
+
+	// PasswordFailuresTotal conta tentativas de senha recusadas. Um salto
+	// aqui sugere força bruta (ver rate limit por short_id).
+	PasswordFailuresTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_password_failures_total",
+		Help: "Total de tentativas de senha recusadas em links protegidos.",
+	})
+
 	// ClicksTotal conta cliques por país (ISO alpha-2 ou "unknown") e tipo
 	// de dispositivo. País apenas — cidade jamais entra como label
 	// (cardinalidade e privacidade).

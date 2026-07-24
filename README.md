@@ -27,6 +27,9 @@ caracterização cobrindo os endpoints.
 - **Alias customizado** — `custom_alias` opcional (`^[a-zA-Z0-9_-]{3,30}$`), com proteção contra
   colisão e rotas reservadas.
 - **Expiração / TTL** — `expires_in_days` opcional; links expirados respondem **410 Gone**.
+- **Link protegido por senha** — `password` opcional na criação (mín. 4 caracteres, **bcrypt**);
+  abrir o link exige a senha, que libera um cookie assinado de 1h. Links protegidos ficam fora da
+  deduplicação e a senha nunca sai em resposta alguma.
 - **QR code** — `GET /qr/{short_id}` devolve o PNG do short link.
 - **Analytics de clique** — cada acesso gera um evento (referrer, user-agent, `ip_hash`, país,
   dispositivo) gravado de forma **assíncrona** (canal buffered + worker), sem adicionar latência
@@ -62,7 +65,7 @@ caracterização cobrindo os endpoints.
 | QR code | `skip2/go-qrcode` |
 | Documentação | OpenAPI/Swagger (`swaggo/swag` + `gin-swagger`) |
 | Empacotamento | Docker + Docker Compose |
-| CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`) |
+| CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`, `-race`, integração com Postgres, `golangci-lint`, `govulncheck`, `gosec`) |
 | Deploy | Render (app, auto-deploy da `main`) + Neon (PostgreSQL) |
 
 ## 🏗️ Arquitetura
@@ -87,10 +90,11 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET`  | `/` | Landing page (HTML) com formulário de encurtamento. |
-| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`. **201** para novo (inclui `management_token`); **200** com `"existing": true` se a URL já existia (sem token); **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
+| `POST` | `/api/shorten` | Cria um short link a partir de um body JSON. Campos opcionais: `custom_alias`, `expires_in_days`, `password`. **201** para novo (inclui `management_token`); **200** com `"existing": true` se a URL já existia (sem token); **409** em colisão de alias; **422** se a URL for maliciosa; **400** para entrada inválida. |
 | `DELETE` | `/api/links/{short_id}` | Desativa (soft delete) o link. Requer `Authorization: Bearer <management_token>`. **204** sucesso; **403** uniforme se o token faltar/for inválido (não revela se o `short_id` existe). |
 | `GET`  | `/shorten?url=` | Variante legada de criação (**200**), delegando à mesma lógica. |
-| `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado. |
+| `GET`  | `/{short_id}` | Redireciona para a URL original (**302**); **404** se inexistente; **410 Gone** se expirado/desativado; **tela de senha** (ou **401** JSON) se protegido e sem cookie de acesso. |
+| `POST` | `/{short_id}` | Envia a senha de um link protegido (`password` no form ou header `X-Password`). Correta: cookie de acesso (1h) + **302**. Errada: **401**. Máximo de **5 tentativas/min por link** (**429**). |
 | `GET`  | `/stats/{short_id}` | Estatísticas: `access_count`, `total_clicks`, `clicks_per_day` (30 dias), `top_referrers` (top 5), `top_countries` (top 5) e `devices` — bots excluídos. |
 | `GET`  | `/qr/{short_id}` | QR code do short link em PNG (`image/png`). |
 | `GET`  | `/health` | Health check (`status`, `total_urls`, `timestamp`). |
@@ -121,6 +125,34 @@ curl -X POST "https://small-links.onrender.com/api/shorten" \
 
 Se a URL já tiver sido encurtada, a resposta é `200 OK` com o `short_id` existente e
 `"existing": true`.
+
+### Exemplo — link protegido por senha
+
+```bash
+curl -X POST http://localhost:8080/api/shorten \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://exemplo.com/relatorio.pdf","password":"segredo123"}'
+```
+
+```json
+{
+  "short_id": "aB3xY9",
+  "short_url": "http://localhost:8080/aB3xY9",
+  "original_url": "https://exemplo.com/relatorio.pdf",
+  "created_at": "2026-07-23T12:00:00Z",
+  "management_token": "…",
+  "has_password": true
+}
+```
+
+Abrir sem a senha responde **401** (ou a tela de senha, no navegador). Com a senha:
+
+```bash
+curl -i -X POST http://localhost:8080/aB3xY9 -H 'X-Password: segredo123'
+# HTTP/1.1 302 Found
+# Set-Cookie: sl_access=…; Path=/aB3xY9; HttpOnly; SameSite=Lax
+# Location: https://exemplo.com/relatorio.pdf
+```
 
 ### Exemplo — estatísticas
 
@@ -241,12 +273,35 @@ go run ./cmd/server
 
 </details>
 
-**Testes e verificações:** `make check` roda os três passos exigidos antes de qualquer commit
-(o CI para no primeiro que falhar):
+## 🧪 Testes
+
+A suíte tem duas camadas, e as duas rodam no CI:
+
+| Camada | O que cobre | Como roda |
+|--------|-------------|-----------|
+| **Unidade** | Handlers com o banco mockado (`go-sqlmock`), cifragem, HMAC, bcrypt/cookie de acesso, CORS e headers de segurança, redação de URL, rate limiting, geo, Safe Browsing, parsing de env. | `make test` — sem dependência externa. |
+| **Integração** | Repositório e API **ponta a ponta** contra um **Postgres real**: migrations, dedup, expiração, soft delete, links protegidos, analytics assíncrono, stats agregado, QR, health. | `make test-integration` — exige banco. |
 
 ```bash
-make check         # gofmt -w . && go vet ./... && go test ./...
+make check             # gofmt -w . && go vet ./... && go test ./... && security-check
+make test-integration  # sobe nada: usa SMALL_LINKS_TEST_DATABASE_URL
+make race              # go test -race ./...
 ```
+
+Os testes de integração **se auto-pulam** quando `SMALL_LINKS_TEST_DATABASE_URL` não está
+definida — por isso `go test ./...` continua verde numa máquina sem banco. Para rodá-los:
+
+```bash
+docker run -d --name sl-test-pg -p 5433:5432 \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=smalllinks_test \
+  postgres:18-alpine
+
+make test-integration \
+  SMALL_LINKS_TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5433/smalllinks_test?sslmode=disable'
+```
+
+> ⚠️ Use um **banco descartável**: os testes dão `TRUNCATE` em `urls` e `click_events`. Eles
+> rodam com `-p 1` porque os dois pacotes de integração compartilham essas tabelas.
 
 ## 📈 Observabilidade local
 
@@ -336,6 +391,14 @@ gere alguns acessos a short links para populá-los.
   cada resposta recebe um nonce novo, carimbado nas tags `<style>`/`<script>`. Só as rotas
   `/swagger` usam política relaxada (inline de terceiros, desabilitável com
   `SWAGGER_ENABLED=false`).
+- **Links protegidos por senha**: `password` opcional na criação (mín. 4 caracteres), guardado
+  como **bcrypt custo 12**. A senha e o hash nunca aparecem em resposta alguma — o cliente recebe
+  só `has_password`. Abrir o link exige a senha (tela HTML no navegador, `401` JSON para clientes
+  de API); acertando, o servidor emite um cookie **assinado (HMAC-SHA256), válido por 1h**,
+  `HttpOnly`, `Secure` em produção, `SameSite=Lax` e restrito ao `Path` do próprio link.
+  Tentativas são limitadas a **5 por minuto por link** (429). Links com senha ficam **fora da
+  deduplicação** nos dois sentidos, e expiração/exclusão têm precedência sobre a senha (link
+  morto responde `410` sem exibir a tela).
 - **Redação de URLs em log**: `internal/logging.RedactURL` substitui por `REDACTED` o valor dos
   query params `token`, `auth`, `password`, `api_key`, `secret` e `access_token` (case-insensitive)
   antes de qualquer URL original chegar ao logger.
