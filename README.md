@@ -399,6 +399,9 @@ gere alguns acessos a short links para populá-los.
   Tentativas são limitadas a **5 por minuto por link** (429). Links com senha ficam **fora da
   deduplicação** nos dois sentidos, e expiração/exclusão têm precedência sobre a senha (link
   morto responde `410` sem exibir a tela).
+- **CSP e links protegidos**: a tela de senha é servida **sem** a diretiva `form-action` — o
+  navegador a aplica a toda a cadeia de redirects do envio do formulário, e o destino de um short
+  link é externo por definição. Todas as demais rotas mantêm `form-action 'self'`.
 - **Redação de URLs em log**: `internal/logging.RedactURL` substitui por `REDACTED` o valor dos
   query params `token`, `auth`, `password`, `api_key`, `secret` e `access_token` (case-insensitive)
   antes de qualquer URL original chegar ao logger.

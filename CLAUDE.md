@@ -260,6 +260,36 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `landingHandler` carimba `<style>`/`<script>` com o mesmo valor (cópia de ~30 KB por requisição,
   custo irrelevante). **Exceção**: `/swagger` recebe política relaxada — o inline vem de lib de
   terceiros e não é carimbável (rota desabilitável em produção).
+- **`form-action 'self'` quebrava o link protegido por senha (bug corrigido)**: ao enviar a senha
+  correta, o cookie era gravado mas o usuário **ficava parado na tela** — só o acesso seguinte
+  funcionava. Causa raiz: o navegador valida `form-action` contra o documento que contém o
+  formulário **e a cada hop da cadeia de redirects daquele envio**; como o destino de um short link
+  é uma URL externa por definição, o Chromium abortava a navegação
+  (`Sending form data to ... violates ... form-action 'self'`). O `Set-Cookie` já tinha sido
+  processado, daí o sintoma enganoso. **Trocar 302 por 303 para a própria rota NÃO resolve** —
+  verificado em Chromium real: o 303 é aceito, mas o GET seguinte, ainda parte da mesma cadeia,
+  é barrado igual. Correção: `passwordPageCSP` serve a tela de senha **sem** a diretiva
+  `form-action` (todo o resto do endurecimento permanece), e o handler voltou ao **302 direto ao
+  destino** para navegador e API. Relaxar ali é seguro porque a página não tem nenhum conteúdo
+  controlável por terceiros: template embutido cujas variáveis são só nonce, action (short_id já
+  validado) e uma mensagem de erro constante. **Lição**: `form-action` é incompatível com qualquer
+  rota cuja função seja levar o usuário para fora do site — e o efeito colateral aparece como bug
+  de sessão/cookie, não de CSP. Testes em `TestPasswordPageCSPAllowsFormAction` (ausência da
+  diretiva), `TestFormActionKeptOnOtherRoutes` (as demais rotas seguem restritas) e
+  `TestPasswordSubmitCorrectRedirectsWithCookie` (302 + Location + cookie na MESMA resposta).
+- **QR da landing: falha silenciosa (corrigido) e hipóteses descartadas**. Investigação com
+  Chromium real em quatro cenários (contexto limpo, histórico com 20 itens, conexão ociosa além do
+  `IdleTimeout`, backend lento): **nenhuma falha dura foi reproduzida**. Descartado que
+  `GET /qr/:shortId` compartilhe rate limiter — a rota **não tem limiter algum** (o `createLimiter`
+  cobre só criação e DELETE); 12 criações seguidas deram QR 200 em todas, e o 429 só apareceu na
+  *criação*. Também não há corrida criação↔imagem: o insert commita antes do 201. O defeito real é
+  **(c) a falha era 100% silenciosa** — o `<img>` não tinha `onerror`, então qualquer falha
+  transitória (rede, free tier do Render hibernando, link excluído noutra aba → 410) deixava um
+  espaço vazio permanente, sem aviso e sem como tentar de novo. Correção no front: `onerror` →
+  mensagem discreta + botão de retry **com cache-buster** (`?r=N`, pois o navegador memoriza o
+  resultado negativo de uma imagem e reatribuir a mesma URL não dispararia nova requisição), e
+  `fetchpriority="high"` no `<img>` — observou-se que a requisição do QR era despachada **depois**
+  das até 21 chamadas a `/stats` que o histórico dispara logo em seguida.
 - **Redação de URL em log (`internal/logging.RedactURL`)**: valores dos query params `token`,
   `auth`, `password`, `api_key`, `secret`, `access_token` (case-insensitive) viram `REDACTED`
   antes de qualquer URL original ir para o logger. URL inparseável vira `[unparseable-url]` e

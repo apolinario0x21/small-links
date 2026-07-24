@@ -68,6 +68,9 @@ func (s *Server) renderPasswordPage(c *gin.Context, shortID, errMsg string, stat
 
 	c.Status(status)
 	c.Header("Content-Type", "text/html; charset=utf-8")
+	// Sobrescreve a CSP do middleware: esta página precisa poder enviar o
+	// formulário para um destino externo (ver passwordPageCSP).
+	c.Header("Content-Security-Policy", passwordPageCSP(data.Nonce))
 	// Cache de tela de senha não faz sentido e atrapalha o pós-login.
 	c.Header("Cache-Control", "no-store")
 	if err := passwordTemplate.Execute(c.Writer, data); err != nil {
@@ -120,7 +123,7 @@ func submittedPassword(c *gin.Context) string {
 // passwordHandler recebe a senha de um link protegido e, se correta, emite o
 // cookie de acesso e redireciona.
 // @Summary      Envia a senha de um link protegido
-// @Description  Aceita `password` via form ou header `X-Password`. Senha correta emite cookie de acesso assinado (1h, HttpOnly, Path do link) e responde 302 para a URL original. Limitado a 5 tentativas por minuto POR LINK.
+// @Description  Aceita `password` via form ou header `X-Password`. Senha correta emite o cookie de acesso assinado (1h, HttpOnly, Path do link) e responde 302 para a URL original, na mesma resposta. Limitado a 5 tentativas por minuto POR LINK.
 // @Tags         redirect
 // @Accept       x-www-form-urlencoded
 // @Produce      json
@@ -157,6 +160,9 @@ func (s *Server) passwordHandler(c *gin.Context) {
 	}
 
 	s.issueAccessCookie(c, shortId)
+	// 302 direto ao destino, para navegador e cliente de API. O bloqueio que
+	// existia aqui não era do código do redirect, e sim da diretiva
+	// `form-action` da CSP — corrigida em passwordPageCSP.
 	s.completeRedirect(c, urlData)
 }
 

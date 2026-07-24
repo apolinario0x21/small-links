@@ -337,6 +337,9 @@ func TestContentSecurityPolicyPerRoute(t *testing.T) {
 		if !strings.Contains(policy, "frame-ancestors 'none'") {
 			t.Errorf("política sem frame-ancestors: %q", policy)
 		}
+		if !strings.Contains(policy, "form-action 'self'") {
+			t.Errorf("política geral sem form-action: %q", policy)
+		}
 	}
 }
 

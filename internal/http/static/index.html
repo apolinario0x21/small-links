@@ -128,6 +128,33 @@
       width: 168px;
       height: 168px;
     }
+    /* Fallback do QR: ocupa o mesmo espaço da imagem, para o layout não pular. */
+    .qr-fallback {
+      margin-top: 1rem;
+      width: 168px;
+      height: 168px;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      text-align: center;
+    }
+    .qr-fallback p { color: var(--muted); font-size: 0.75rem; margin: 0; }
+    .qr-retry {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--fg);
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding: 0.35rem 0.7rem;
+    }
+    .qr-retry:hover { border-color: var(--accent-dim); }
     .protected { color: var(--accent); font-size: 0.8rem; margin: 0 0 0.6rem; }
     .hi-lock { color: var(--accent); font-size: 0.72rem; margin-left: 0.35rem; }
     .history { margin-top: 1.6rem; }
@@ -235,7 +262,14 @@
         <button type="button" class="copy" id="copy">copiar</button>
       </div>
       <p class="dest">destino: <b id="dest"></b></p>
-      <img class="qr" id="qr" alt="QR code do link encurtado" width="168" height="168">
+      <!-- fetchpriority=high: o QR é o conteúdo visível do resultado e não deve
+           ficar atrás das chamadas de /stats que o histórico dispara logo em seguida. -->
+      <img class="qr" id="qr" alt="QR code do link encurtado" width="168" height="168"
+           fetchpriority="high" decoding="async">
+      <div class="qr-fallback" id="qrFallback" hidden>
+        <p>QR indisponível — recarregue</p>
+        <button type="button" class="qr-retry" id="qrRetry">tentar de novo</button>
+      </div>
     </section>
 
     <section class="history" id="history" hidden>
@@ -271,6 +305,8 @@
       var shortUrl = document.getElementById("shortUrl");
       var dest = document.getElementById("dest");
       var qr = document.getElementById("qr");
+      var qrFallback = document.getElementById("qrFallback");
+      var qrRetry = document.getElementById("qrRetry");
       var copyBtn = document.getElementById("copy");
 
       function showError(status) {
@@ -288,6 +324,54 @@
         result.hidden = true;
       }
 
+      // --- QR code ---
+      //
+      // A falha de carregamento do <img> era SILENCIOSA: qualquer erro
+      // transitório (rede, backend hibernando, link excluído noutra aba)
+      // deixava um espaço vazio permanente, sem aviso e sem como tentar de
+      // novo. Agora o erro vira mensagem discreta + botão de retry.
+      var qrShortId = "";
+      var qrAttempt = 0;
+
+      function loadQR() {
+        qrAttempt++;
+        qrFallback.hidden = true;
+        qr.hidden = false;
+        // Cache-buster no retry: o navegador guarda o resultado negativo de uma
+        // imagem, então reatribuir a MESMA URL não dispararia nova requisição.
+        var suffix = qrAttempt > 1 ? "?r=" + qrAttempt : "";
+        qr.setAttribute("src", "/qr/" + encodeURIComponent(qrShortId) + suffix);
+      }
+
+      function showQR(shortId) {
+        if (!shortId) {
+          qrShortId = "";
+          qr.removeAttribute("src");
+          qr.hidden = true;
+          qrFallback.hidden = true;
+          return;
+        }
+        qrShortId = shortId;
+        qrAttempt = 0;
+        loadQR();
+      }
+
+      qr.addEventListener("error", function () {
+        // Só reporta erro de um src real (removeAttribute não dispara nada).
+        if (!qrShortId) return;
+        qr.hidden = true;
+        qrFallback.hidden = false;
+      });
+
+      qr.addEventListener("load", function () {
+        qrFallback.hidden = true;
+        qr.hidden = false;
+      });
+
+      qrRetry.addEventListener("click", function () {
+        if (qrShortId) loadQR();
+      });
+
       function showResult(data) {
         errorBox.hidden = true;
         existing.hidden = data.existing !== true;
@@ -300,13 +384,7 @@
         shortUrl.setAttribute("href", data.short_url);
         dest.textContent = data.original_url || "";
 
-        if (data.short_id) {
-          qr.setAttribute("src", "/qr/" + encodeURIComponent(data.short_id));
-          qr.hidden = false;
-        } else {
-          qr.removeAttribute("src");
-          qr.hidden = true;
-        }
+        showQR(data.short_id);
 
         result.hidden = false;
         addToHistory(data);

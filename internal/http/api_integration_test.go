@@ -478,6 +478,57 @@ func (e *env) submitPassword(client *http.Client, shortID, password string) repl
 	return read(e.t, resp, err, "POST senha")
 }
 
+// Caminho do NAVEGADOR ponta a ponta: envia o formulário com Accept: text/html
+// e recebe, na MESMA resposta, o cookie e o 302 para o destino.
+//
+// Regressão do bug em que a diretiva `form-action 'self'` da CSP bloqueava a
+// navegação: o cookie era gravado, mas o usuário ficava na tela de senha e
+// precisava acessar o link outra vez. Aqui verificamos as duas metades da
+// correção — a resposta certa E a política que permite o navegador segui-la.
+func TestIntegrationPasswordSubmitFromBrowserReachesTarget(t *testing.T) {
+	e := newEnv(t)
+	const target = "https://www.exemplo.com/destino-do-navegador"
+
+	created := e.mustShorten(`{"url":"` + target + `","password":"segredo123"}`)
+	shortID := shortIDOf(t, created)
+
+	client := e.client()
+
+	// A CSP da tela de senha não pode restringir form-action, senão o
+	// navegador aborta o envio antes mesmo de sair da página.
+	page := e.getHTML("/"+shortID, client)
+	if strings.Contains(page.header.Get("Content-Security-Policy"), "form-action") {
+		t.Fatalf("CSP da tela de senha restringe form-action: %q", page.header.Get("Content-Security-Policy"))
+	}
+
+	// Envio do formulário: 302 para o destino + cookie na MESMA resposta.
+	form := url.Values{"password": {"segredo123"}}
+	req, err := http.NewRequest(http.MethodPost, e.server.URL+"/"+shortID, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("montar POST: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html")
+	resp, err := client.Do(req)
+	posted := read(t, resp, err, "POST senha (navegador)")
+
+	if posted.status != http.StatusFound {
+		t.Fatalf("status = %d, want 302", posted.status)
+	}
+	if loc := posted.header.Get("Location"); loc != target {
+		t.Fatalf("Location = %q, want %q", loc, target)
+	}
+	if posted.header.Get("Set-Cookie") == "" {
+		t.Fatal("Set-Cookie ausente na resposta do redirect")
+	}
+
+	// E o cookie recebido serve para o acesso seguinte, sem nova senha.
+	again := e.get("/"+shortID, client)
+	if again.status != http.StatusFound || again.header.Get("Location") != target {
+		t.Errorf("acesso seguinte: status = %d, Location = %q", again.status, again.header.Get("Location"))
+	}
+}
+
 // Expiração tem precedência sobre a senha: link morto responde 410 sem nunca
 // mostrar a tela.
 func TestIntegrationExpiredProtectedLinkReturnsGone(t *testing.T) {
