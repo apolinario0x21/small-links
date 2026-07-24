@@ -75,8 +75,8 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 		expiresAt = *data.ExpiresAt
 	}
 
-	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count, expires_at) VALUES ($1, $2, $3, $4, $5, $6)`
-	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt)
+	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count, expires_at, management_token_hash) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`
+	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt, data.ManagementTokenHash)
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) {
@@ -99,7 +99,7 @@ func (p *Postgres) FindByURLHash(ctx context.Context, urlHash string) (URLData, 
 	defer cancel()
 
 	var data URLData
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 AND (expires_at IS NULL OR expires_at > now()) ORDER BY id LIMIT 1`, urlHash)
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now()) ORDER BY id LIMIT 1`, urlHash)
 	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.CreatedAt, &data.AccessCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
@@ -114,14 +114,17 @@ func (p *Postgres) FindForRedirect(ctx context.Context, shortID string) (URLData
 	defer cancel()
 
 	var data URLData
-	var expiresAt sql.NullTime
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count, expires_at FROM urls WHERE short_id = $1`, shortID)
-	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount, &expiresAt)
+	var expiresAt, deletedAt sql.NullTime
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = $1`, shortID)
+	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount, &expiresAt, &deletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
 	}
 	if expiresAt.Valid {
 		data.ExpiresAt = &expiresAt.Time
+	}
+	if deletedAt.Valid {
+		data.DeletedAt = &deletedAt.Time
 	}
 	return data, err
 }
@@ -159,6 +162,38 @@ func (p *Postgres) InsertClickEvent(ctx context.Context, e ClickEvent) error {
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8)`
 	_, err := p.db.ExecContext(ctx, insertSQL, e.ShortID, e.Referrer, e.UserAgent, e.IPHash, e.Country, e.Device, e.OS, e.IsBot)
 	return err
+}
+
+// ManagementHash devolve o SHA-256 do token do link e se o short_id existe.
+// Não filtra deletados: soft delete é idempotente e o token continua válido.
+func (p *Postgres) ManagementHash(ctx context.Context, shortID string) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	var hash sql.NullString
+	row := p.db.QueryRowContext(ctx, `SELECT management_token_hash FROM urls WHERE short_id = $1`, shortID)
+	err := row.Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return hash.String, true, nil
+}
+
+// SoftDelete marca deleted_at = now() se ainda estava ativo. O registro
+// permanece na tabela, então o short_id nunca é reciclado (constraint UNIQUE).
+func (p *Postgres) SoftDelete(ctx context.Context, shortID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	res, err := p.db.ExecContext(ctx, `UPDATE urls SET deleted_at = now() WHERE short_id = $1 AND deleted_at IS NULL`, shortID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func (p *Postgres) CountURLs(ctx context.Context) (int, error) {

@@ -38,6 +38,12 @@ var (
 		Help: "Total de erros/timeouts na verificação Safe Browsing (fail-open).",
 	})
 
+	// LinksDeletedTotal conta soft deletes bem-sucedidos.
+	LinksDeletedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "smalllinks_links_deleted_total",
+		Help: "Total de links desativados (soft delete) por token.",
+	})
+
 	// ClicksTotal conta cliques por país (ISO alpha-2 ou "unknown") e tipo
 	// de dispositivo. País apenas — cidade jamais entra como label
 	// (cardinalidade e privacidade).

@@ -168,6 +168,16 @@
       font-weight: 600;
     }
     .hi-qr:hover { border-color: var(--accent-dim); color: var(--accent); }
+    .hi-delete {
+      font-size: 0.72rem;
+      padding: 0.25rem 0.5rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .hi-delete:hover { border-color: var(--danger); color: var(--danger); }
+    .hi-delete:disabled { opacity: 0.6; cursor: default; }
+    .hi-msg { color: var(--danger); font-size: 0.72rem; margin-top: 0.4rem; }
     .history-note { color: var(--muted); font-size: 0.72rem; margin-top: 0.7rem; opacity: 0.8; }
     footer {
       max-width: 620px;
@@ -349,7 +359,11 @@
           short_url: data.short_url,
           original_url: data.original_url || "",
           created_at: data.created_at || new Date().toISOString(),
-          existing: data.existing === true
+          existing: data.existing === true,
+          // Token de gestão só vem em criação nova (nunca no dedup). Sem ele,
+          // o item não pode ser excluído (links antigos também não têm).
+          management_token: data.management_token || "",
+          deleted: false
         });
         if (arr.length > HISTORY_MAX) arr = arr.slice(0, HISTORY_MAX);
         saveHistory(arr);
@@ -382,6 +396,53 @@
         return str.length > n ? str.slice(0, n) + "…" : str;
       }
 
+      // markDeleted persiste o estado "removido" do item (após DELETE 204).
+      function markDeleted(shortId) {
+        var arr = loadHistory().map(function (it) {
+          if (it.short_id === shortId) { it.deleted = true; }
+          return it;
+        });
+        saveHistory(arr);
+        renderHistory();
+      }
+
+      // showItemMsg exibe uma mensagem por item via textContent (nunca innerHTML).
+      function showItemMsg(li, text) {
+        var el = li.querySelector(".hi-msg");
+        if (!el) {
+          el = document.createElement("div");
+          el.className = "hi-msg";
+          li.appendChild(el);
+        }
+        el.textContent = text;
+      }
+
+      function deleteLink(item, li, btn) {
+        if (!window.confirm("Isto desativa o link permanentemente. Continuar?")) return;
+        btn.disabled = true;
+        btn.textContent = "excluindo...";
+        fetch("/api/links/" + encodeURIComponent(item.short_id), {
+          method: "DELETE",
+          headers: { "Authorization": "Bearer " + item.management_token }
+        }).then(function (resp) {
+          if (resp.status === 204) {
+            markDeleted(item.short_id); // re-renderiza marcando como removido
+            return;
+          }
+          if (resp.status === 403 || resp.status === 404) {
+            showItemMsg(li, "Não foi possível excluir: token inválido ou link já removido.");
+          } else {
+            showItemMsg(li, "Erro ao excluir. Tente novamente.");
+          }
+          btn.disabled = false;
+          btn.textContent = "excluir";
+        }).catch(function () {
+          showItemMsg(li, "Falha de rede ao excluir.");
+          btn.disabled = false;
+          btn.textContent = "excluir";
+        });
+      }
+
       // enrichClicks busca o total de cliques por item, isoladamente: 404/410
       // marcam o item como indisponível; erro de rede é ignorado (não trava
       // os demais). Nada é inserido via innerHTML.
@@ -411,6 +472,7 @@
         arr.forEach(function (item) {
           var li = document.createElement("li");
           li.className = "history-item";
+          if (item.deleted) { li.classList.add("hi-expired"); }
 
           var top = document.createElement("div");
           top.className = "hi-top";
@@ -426,6 +488,7 @@
 
           var clicks = document.createElement("span");
           clicks.className = "hi-clicks";
+          if (item.deleted) { clicks.textContent = "removido"; }
           top.appendChild(clicks);
           li.appendChild(top);
 
@@ -464,10 +527,23 @@
           qrLink.setAttribute("rel", "noopener noreferrer");
           meta.appendChild(qrLink);
 
+          // Botão excluir: só para itens com token de gestão e ainda ativos.
+          // Itens sem token (dedup/links antigos) não mostram o botão.
+          if (item.management_token && !item.deleted) {
+            var del = document.createElement("button");
+            del.type = "button";
+            del.className = "hi-delete";
+            del.textContent = "excluir";
+            del.addEventListener("click", function () { deleteLink(item, li, del); });
+            meta.appendChild(del);
+          }
+
           li.appendChild(meta);
           historyList.appendChild(li);
 
-          enrichClicks(item.short_id, li, clicks);
+          if (!item.deleted) {
+            enrichClicks(item.short_id, li, clicks);
+          }
         });
       }
 

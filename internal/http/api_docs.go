@@ -17,6 +17,9 @@ type ShortenResponse struct {
 	CreatedAt   string `json:"created_at" example:"2026-07-10T12:00:00Z"`
 	ExpiresAt   string `json:"expires_at,omitempty" example:"2026-08-09T12:00:00Z"`
 	Existing    bool   `json:"existing,omitempty" example:"false"`
+	// ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova
+	// (nunca no reaproveitamento por dedup). Guarde-o para excluir o link.
+	ManagementToken string `json:"management_token,omitempty" example:"a1b2c3...64hex"`
 }
 
 // DailyClicksDoc agrega cliques por dia (documentação).

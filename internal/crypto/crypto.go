@@ -41,6 +41,27 @@ func (c *Cipher) Hash(url string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// TokenSize é o tamanho, em bytes, do token de gerenciamento (64 hex chars).
+const TokenSize = 32
+
+// GenerateToken gera um token secreto de 32 bytes aleatórios, hex-encoded
+// (64 caracteres). Devolvido ao criador do link uma única vez.
+func GenerateToken() (string, error) {
+	b := make([]byte, TokenSize)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// TokenSHA256 devolve o SHA-256 hex (64 chars) de um token. Apenas o hash é
+// persistido; o token em claro nunca é gravado. SHA-256 (não HMAC) porque o
+// token já é aleatório de alta entropia — não precisa de chave secreta.
+func TokenSHA256(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 func (c *Cipher) gcm() (cipher.AEAD, error) {
 	block, err := aes.NewCipher(c.key)
 	if err != nil {

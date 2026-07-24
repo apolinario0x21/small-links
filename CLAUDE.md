@@ -176,6 +176,24 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   `metricsMiddleware` a rotula como `route="/"`. O front chama `POST /api/shorten` via `fetch` e
   preenche o resultado só com `textContent`/atributos (nunca `innerHTML`) para evitar XSS
   refletido via `original_url`.
+- **Gerenciamento por token + soft delete (migration 007)**: a criação gera um token de 32
+  bytes (`crypto/rand`, 64 hex) e persiste **só o SHA-256** em `management_token_hash`; o token
+  em claro volta **uma única vez** no response (`management_token`), nunca no reaproveitamento
+  por dedup (só o criador original o tem). `DELETE /api/links/:shortId` autoriza por posse do
+  segredo (Bearer), comparando o SHA-256 com `subtle.ConstantTimeCompare` (comparação normal
+  vaza por timing). **Decisões**: (a) **soft delete** (`deleted_at`) em vez de remover a linha —
+  preserva o analytics e, sobretudo, impede que o `short_id` seja **reciclado** como alias novo
+  (a constraint UNIQUE continua valendo sobre a linha soft-deletada → golpe de reciclagem
+  bloqueado); (b) **autorização por posse de segredo, sem identidade** — nenhuma conta/sessão,
+  coerente com a postura de privacidade; (c) **links antigos (hash NULL) são não-gerenciáveis** —
+  documentado honestamente. **Segurança**: resposta **403 uniforme** para qualquer não-autorização
+  (token ausente, errado, link inexistente ou não-gerenciável) — não vaza se o `short_id` existe;
+  comparação em tempo constante inclusive contra um hash dummy quando o link não existe. Efeitos
+  do soft delete: redirect/QR de deletado → **410**; dedup ignora deletados (mesmo critério dos
+  expirados); `/stats` permanece acessível. Métrica `smalllinks_links_deleted_total`; rate limit
+  do DELETE igual ao da criação. **Nota sobre o 404**: os requisitos listavam 404 para short_id
+  inexistente, mas isso colide com o requisito crítico de não vazar existência via token inválido
+  — optou-se por **403 uniforme** (os testes cobrem exatamente isso; não há teste de 404).
 - **Histórico de links (client-side)**: a landing guarda os links criados no `localStorage`
   (`small-links:history`, máx. 20, dedup por `short_id`, mais recente no topo) e enriquece cada
   item com a contagem de cliques via `GET /stats/:shortId` (404/410 esmaece o item; erro de rede
