@@ -81,3 +81,67 @@ func TestMaliciousSendsThreatTypes(t *testing.T) {
 		t.Errorf("threatEntries = %v", body.ThreatInfo.ThreatEntries)
 	}
 }
+
+// New configura o endpoint oficial e um timeout — sem timeout, a checagem
+// poderia segurar a criação do link indefinidamente.
+func TestNewSetsDefaults(t *testing.T) {
+	c := New("minha-chave")
+
+	if c.apiKey != "minha-chave" {
+		t.Errorf("apiKey = %q", c.apiKey)
+	}
+	if c.endpoint != defaultEndpoint {
+		t.Errorf("endpoint = %q, want %q", c.endpoint, defaultEndpoint)
+	}
+	if c.httpClient == nil || c.httpClient.Timeout != requestTimeout {
+		t.Errorf("httpClient sem o timeout esperado (%v)", requestTimeout)
+	}
+}
+
+// Resposta ilegível é falha da verificação (erro), nunca "URL limpa": tratar
+// como limpa deixaria passar silenciosamente uma URL não verificada.
+func TestMaliciousMalformedJSONIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"matches": [`))
+	}))
+	defer srv.Close()
+
+	blocked, err := newTestClient(srv).Malicious(context.Background(), "https://exemplo.com")
+
+	if err == nil {
+		t.Error("resposta malformada deveria devolver erro")
+	}
+	if blocked {
+		t.Error("blocked = true; erro de verificação nunca bloqueia (fail-open é do chamador)")
+	}
+}
+
+// Erro de rede/timeout também é erro da verificação, não bloqueio.
+func TestMaliciousNetworkErrorIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	client := newTestClient(srv)
+	srv.Close() // servidor fora do ar: a conexão falha
+
+	blocked, err := client.Malicious(context.Background(), "https://exemplo.com")
+
+	if err == nil {
+		t.Error("falha de rede deveria devolver erro")
+	}
+	if blocked {
+		t.Error("blocked = true em falha de rede")
+	}
+}
+
+func TestMaliciousCanceledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := newTestClient(srv).Malicious(ctx, "https://exemplo.com"); err == nil {
+		t.Error("contexto cancelado deveria devolver erro")
+	}
+}

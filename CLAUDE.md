@@ -8,7 +8,9 @@ Render (app, auto-deploy da `main`) + Neon (PostgreSQL): <https://small-links.on
 - Rodar local: `go run ./cmd/server` (exige `ENCRYPTION_KEY` de 32 chars e `DATABASE_URL`)
 - Subir tudo: `docker compose up --build`
 - Observabilidade local (dev): `docker compose -f docker-compose.observability.yml up -d`
-- Testes: `go test ./...`
+- Testes: `go test ./...` (unidade; os de integração se auto-pulam sem banco)
+- Testes de integração (Postgres real): `make test-integration
+  SMALL_LINKS_TEST_DATABASE_URL='postgres://...'` — roda com `-p 1 -count=1`
 - Verificações: `gofmt -l .` e `go vet ./...`
 - Segurança: `make security-check` (govulncheck + gosec); corrida: `make race` (`go test -race`)
 - Dependências: `go mod tidy`
@@ -286,6 +288,30 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
 - **golangci-lint no CI**: usar `golangci/golangci-lint-action@v8` (linha v2 do linter, versão
   pinada). A `@v6` resolve `latest` para a v1, que não lê o `.golangci.yml` em `version: "2"` e
   é compilada com Go 1.24 — abaixo do `go.mod`, o que aborta o carregamento da config.
+- **Duas camadas de teste**: unidade (handlers com `go-sqlmock`, cifragem, cookie, CORS,
+  redação, rate limiting) e **integração contra Postgres real** — `internal/storage/
+  postgres_integration_test.go` (repositório) e `internal/http/api_integration_test.go` (API
+  ponta a ponta, com `httptest.Server` sobre o router de produção, repositório real e Recorder
+  real). **Decisões**: (a) **integração de verdade, não sqlmock, para o que vive no SQL** — o
+  critério de exclusão do dedup, o `NULLIF`, o mapeamento de `unique_violation`/
+  `string_data_right_truncation` e o soft delete que impede reciclagem de short_id só podem ser
+  confirmados por um banco; contra mock, o teste apenas repetiria a string da query que eu mesmo
+  escrevi. (b) **Auto-skip por `SMALL_LINKS_TEST_DATABASE_URL`** — `go test ./...` continua verde
+  sem banco (e o job padrão do CI segue rápido); o job `integration` do CI provê o Postgres como
+  service. (c) **`-p 1` obrigatório na integração**: os dois pacotes dão `TRUNCATE` nas mesmas
+  tabelas e o Go paraleliza pacotes por padrão. Sem `-p 1` passou nas execuções que fiz, mas o
+  isolamento não é garantido — é corrida latente, e serializar custa segundos. (d) **`-count=1`**:
+  cache de teste não enxerga mudança de estado no banco. (e) **Analytics é assíncrono**, então a
+  asserção sobre cliques só vem depois de `Recorder.Close()` (flush) — sem isso o teste seria
+  uma corrida com o worker. Cobertura total foi de **67,2% → 88,8%** (`internal/storage` saiu de
+  0%, pois só tinha caminho de banco). (f) **Clientes de teste com `DisableKeepAlives`**:
+  `httptest.Server.Close()` bloqueia enquanto houver conexão aberta, e cada cliente deixava a sua
+  ociosa no pool — o pacote gastava **~40s de espera pura no teardown**, sem teste algum rodando
+  (4,3s depois da correção). (g) **Asserção de rate limit não fixa o número da tentativa**: sob
+  `-race` o bcrypt custa segundos e o limiter recarrega no meio do laço, então o teste tenta até
+  20 vezes e exige que o 429 apareça — o consumo é mais rápido que a recarga, logo é inevitável,
+  mas *em qual* tentativa depende da máquina. Mesma lição já registrada nos testes de unidade:
+  **asserção sobre rate limit não pode depender de operação lenta dentro da janela**.
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +

@@ -41,6 +41,42 @@ jobs:
       - name: go test -race
         run: go test -race ./...
 
+  # Integração: repositório e API contra um Postgres real. Sem este job, as
+  # invariantes que vivem no SQL (dedup, soft delete, NULLIF) só seriam
+  # verificadas contra mocks — que apenas repetem a query que escrevemos.
+  integration:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: smalllinks_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          check-latest: true
+
+      # -p 1: os dois pacotes de integração compartilham o banco e dão
+      # TRUNCATE nas mesmas tabelas — serializar evita a corrida latente.
+      - name: go test (integração)
+        env:
+          SMALL_LINKS_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/smalllinks_test?sslmode=disable
+        run: go test -p 1 -count=1 ./...
+
   security:
     runs-on: ubuntu-latest
     steps:

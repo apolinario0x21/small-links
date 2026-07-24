@@ -65,7 +65,7 @@ caracterização cobrindo os endpoints.
 | QR code | `skip2/go-qrcode` |
 | Documentação | OpenAPI/Swagger (`swaggo/swag` + `gin-swagger`) |
 | Empacotamento | Docker + Docker Compose |
-| CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`) |
+| CI | GitHub Actions (`gofmt`, `go vet`, `go build`, `go test`, `-race`, integração com Postgres, `golangci-lint`, `govulncheck`, `gosec`) |
 | Deploy | Render (app, auto-deploy da `main`) + Neon (PostgreSQL) |
 
 ## 🏗️ Arquitetura
@@ -273,12 +273,35 @@ go run ./cmd/server
 
 </details>
 
-**Testes e verificações:** `make check` roda os três passos exigidos antes de qualquer commit
-(o CI para no primeiro que falhar):
+## 🧪 Testes
+
+A suíte tem duas camadas, e as duas rodam no CI:
+
+| Camada | O que cobre | Como roda |
+|--------|-------------|-----------|
+| **Unidade** | Handlers com o banco mockado (`go-sqlmock`), cifragem, HMAC, bcrypt/cookie de acesso, CORS e headers de segurança, redação de URL, rate limiting, geo, Safe Browsing, parsing de env. | `make test` — sem dependência externa. |
+| **Integração** | Repositório e API **ponta a ponta** contra um **Postgres real**: migrations, dedup, expiração, soft delete, links protegidos, analytics assíncrono, stats agregado, QR, health. | `make test-integration` — exige banco. |
 
 ```bash
-make check         # gofmt -w . && go vet ./... && go test ./...
+make check             # gofmt -w . && go vet ./... && go test ./... && security-check
+make test-integration  # sobe nada: usa SMALL_LINKS_TEST_DATABASE_URL
+make race              # go test -race ./...
 ```
+
+Os testes de integração **se auto-pulam** quando `SMALL_LINKS_TEST_DATABASE_URL` não está
+definida — por isso `go test ./...` continua verde numa máquina sem banco. Para rodá-los:
+
+```bash
+docker run -d --name sl-test-pg -p 5433:5432 \
+  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=smalllinks_test \
+  postgres:18-alpine
+
+make test-integration \
+  SMALL_LINKS_TEST_DATABASE_URL='postgres://postgres:postgres@localhost:5433/smalllinks_test?sslmode=disable'
+```
+
+> ⚠️ Use um **banco descartável**: os testes dão `TRUNCATE` em `urls` e `click_events`. Eles
+> rodam com `-p 1` porque os dois pacotes de integração compartilham essas tabelas.
 
 ## 📈 Observabilidade local
 
