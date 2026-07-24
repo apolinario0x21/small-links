@@ -45,10 +45,13 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # A ação v8 é a que instala a linha v2 do golangci-lint — a v6 resolve
+      # "latest" para a v1, que não lê o .golangci.yml (version: "2") e é
+      # compilada com Go 1.24, abaixo do go.mod (1.25).
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          version: v2.12.2
 
       # Vulnerabilidades conhecidas nas dependências.
       - name: govulncheck
