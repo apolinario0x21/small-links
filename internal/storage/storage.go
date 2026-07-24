@@ -32,6 +32,9 @@ type URLData struct {
 	// caso contrário, soft-deletado.
 	ManagementTokenHash string
 	DeletedAt           *time.Time
+	// PasswordHash é o bcrypt da senha de acesso; vazio = link público. A
+	// senha em claro nunca é persistida nem devolvida em resposta alguma.
+	PasswordHash string
 }
 
 // ClickEvent é um evento de acesso a um short link, gravado de forma
@@ -86,6 +89,9 @@ type ClickStats struct {
 
 type Repository interface {
 	Insert(ctx context.Context, data URLData) error
+	// FindByURLHash localiza um link reaproveitável pelo HMAC da URL.
+	// Ignora expirados, deletados e PROTEGIDOS POR SENHA — quem encurta sem
+	// senha não pode receber um link que não conseguiria abrir.
 	FindByURLHash(ctx context.Context, urlHash string) (URLData, error)
 	FindForRedirect(ctx context.Context, shortID string) (URLData, error)
 	FindByShortID(ctx context.Context, shortID string) (URLData, error)

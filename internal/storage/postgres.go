@@ -75,8 +75,8 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 		expiresAt = *data.ExpiresAt
 	}
 
-	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count, expires_at, management_token_hash) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))`
-	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt, data.ManagementTokenHash)
+	insertSQL := `INSERT INTO urls (short_id, original_url, url_hash, created_at, access_count, expires_at, management_token_hash, password_hash) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''))`
+	_, err := p.db.ExecContext(ctx, insertSQL, data.ShortID, data.OriginalURL, data.URLHash, data.CreatedAt, data.AccessCount, expiresAt, data.ManagementTokenHash, data.PasswordHash)
 
 	var pqErr *pq.Error
 	if errors.As(err, &pqErr) {
@@ -92,14 +92,15 @@ func (p *Postgres) Insert(ctx context.Context, data URLData) error {
 }
 
 // FindByURLHash localiza uma URL já encurtada pelo HMAC da URL original,
-// ignorando registros expirados — dedup não deve devolver um link morto.
+// ignorando registros expirados, deletados e protegidos por senha — dedup não
+// deve devolver um link morto nem um link que o solicitante não consegue abrir.
 // Registros anteriores ao backfill têm url_hash NULL e nunca casam aqui.
 func (p *Postgres) FindByURLHash(ctx context.Context, urlHash string) (URLData, error) {
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	var data URLData
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > now()) ORDER BY id LIMIT 1`, urlHash)
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, created_at, access_count FROM urls WHERE url_hash = $1 AND deleted_at IS NULL AND password_hash IS NULL AND (expires_at IS NULL OR expires_at > now()) ORDER BY id LIMIT 1`, urlHash)
 	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.CreatedAt, &data.AccessCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
@@ -115,8 +116,9 @@ func (p *Postgres) FindForRedirect(ctx context.Context, shortID string) (URLData
 
 	var data URLData
 	var expiresAt, deletedAt sql.NullTime
-	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count, expires_at, deleted_at FROM urls WHERE short_id = $1`, shortID)
-	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount, &expiresAt, &deletedAt)
+	var passwordHash sql.NullString
+	row := p.db.QueryRowContext(ctx, `SELECT short_id, original_url, access_count, expires_at, deleted_at, password_hash FROM urls WHERE short_id = $1`, shortID)
+	err := row.Scan(&data.ShortID, &data.OriginalURL, &data.AccessCount, &expiresAt, &deletedAt, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return URLData{}, ErrNotFound
 	}
@@ -126,6 +128,7 @@ func (p *Postgres) FindForRedirect(ctx context.Context, shortID string) (URLData
 	if deletedAt.Valid {
 		data.DeletedAt = &deletedAt.Time
 	}
+	data.PasswordHash = passwordHash.String
 	return data, err
 }
 

@@ -20,6 +20,9 @@ type ShortenResponse struct {
 	// ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova
 	// (nunca no reaproveitamento por dedup). Guarde-o para excluir o link.
 	ManagementToken string `json:"management_token,omitempty" example:"a1b2c3...64hex"`
+	// HasPassword indica se o link exige senha para abrir. A senha e seu
+	// hash nunca aparecem em resposta alguma.
+	HasPassword bool `json:"has_password" example:"false"`
 }
 
 // DailyClicksDoc agrega cliques por dia (documentação).

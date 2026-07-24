@@ -316,7 +316,7 @@
         },
         "/{shortId}": {
             "get": {
-                "description": "Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado.",
+                "description": "Responde 302 para a URL original. 404 se inexistente, 410 se expirado ou deletado. Link protegido por senha sem cookie de acesso responde a tela de senha (Accept: text/html) ou 401 JSON.",
                 "produces": [
                     "application/json"
                 ],
@@ -337,6 +337,12 @@
                     "302": {
                         "description": "Redirect para a URL original"
                     },
+                    "401": {
+                        "description": "Link protegido por senha",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -345,6 +351,75 @@
                     },
                     "410": {
                         "description": "Link expirado ou desativado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Aceita `password` via form ou header `X-Password`. Senha correta emite cookie de acesso assinado (1h, HttpOnly, Path do link) e responde 302 para a URL original. Limitado a 5 tentativas por minuto POR LINK.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "redirect"
+                ],
+                "summary": "Envia a senha de um link protegido",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Identificador do short link",
+                        "name": "shortId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Senha do link",
+                        "name": "password",
+                        "in": "formData"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Senha do link (alternativa ao form)",
+                        "name": "X-Password",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect para a URL original"
+                    },
+                    "401": {
+                        "description": "Senha ausente ou incorreta",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Link inexistente ou sem senha",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "410": {
+                        "description": "Link expirado ou desativado",
+                        "schema": {
+                            "$ref": "#/definitions/http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Tentativas excedidas para este link",
                         "schema": {
                             "$ref": "#/definitions/http.ErrorResponse"
                         }
@@ -449,6 +524,11 @@
                     "type": "integer",
                     "example": 30
                 },
+                "password": {
+                    "description": "Password protege o link: o acesso passa a exigir a senha. Mínimo de 4\ncaracteres. Nunca é devolvida em resposta alguma (o cliente recebe\napenas has_password).",
+                    "type": "string",
+                    "example": "segredo123"
+                },
                 "url": {
                     "type": "string",
                     "example": "https://www.exemplo.com/pagina"
@@ -469,6 +549,11 @@
                 "expires_at": {
                     "type": "string",
                     "example": "2026-08-09T12:00:00Z"
+                },
+                "has_password": {
+                    "description": "HasPassword indica se o link exige senha para abrir. A senha e seu\nhash nunca aparecem em resposta alguma.",
+                    "type": "boolean",
+                    "example": false
                 },
                 "management_token": {
                     "description": "ManagementToken é devolvido UMA ÚNICA VEZ, apenas em criação nova\n(nunca no reaproveitamento por dedup). Guarde-o para excluir o link.",

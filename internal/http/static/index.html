@@ -128,6 +128,8 @@
       width: 168px;
       height: 168px;
     }
+    .protected { color: var(--accent); font-size: 0.8rem; margin: 0 0 0.6rem; }
+    .hi-lock { color: var(--accent); font-size: 0.72rem; margin-left: 0.35rem; }
     .history { margin-top: 1.6rem; }
     .history-head {
       display: flex;
@@ -213,6 +215,10 @@
             <label for="expires">expira em (dias)</label>
             <input id="expires" name="expires" type="number" min="1" placeholder="ex.: 30">
           </div>
+          <div>
+            <label for="password">senha (opcional)</label>
+            <input id="password" name="password" type="password" minlength="4" autocomplete="new-password" placeholder="mín. 4 caracteres">
+          </div>
         </div>
       </details>
 
@@ -223,6 +229,7 @@
 
     <section class="result" id="result" hidden>
       <p class="existing" id="existing" hidden>URL já encurtada anteriormente — reaproveitando link.</p>
+      <p class="protected" id="protected" hidden>🔒 link protegido por senha — quem abrir precisará digitá-la.</p>
       <div class="short-row">
         <a id="shortUrl" target="_blank" rel="noopener noreferrer"></a>
         <button type="button" class="copy" id="copy">copiar</button>
@@ -254,11 +261,13 @@
       var urlInput = document.getElementById("url");
       var aliasInput = document.getElementById("alias");
       var expiresInput = document.getElementById("expires");
+      var passwordInput = document.getElementById("password");
       var submitBtn = form.querySelector(".submit");
 
       var errorBox = document.getElementById("error");
       var result = document.getElementById("result");
       var existing = document.getElementById("existing");
+      var protectedNote = document.getElementById("protected");
       var shortUrl = document.getElementById("shortUrl");
       var dest = document.getElementById("dest");
       var qr = document.getElementById("qr");
@@ -282,6 +291,8 @@
       function showResult(data) {
         errorBox.hidden = true;
         existing.hidden = data.existing !== true;
+        // has_password é o único sinal da senha que o servidor devolve.
+        protectedNote.hidden = data.has_password !== true;
 
         // Todos os campos abaixo são preenchidos via textContent/atributos,
         // nunca innerHTML — original_url pode conter conteúdo hostil.
@@ -360,6 +371,7 @@
           original_url: data.original_url || "",
           created_at: data.created_at || new Date().toISOString(),
           existing: data.existing === true,
+          has_password: data.has_password === true,
           // Token de gestão só vem em criação nova (nunca no dedup). Sem ele,
           // o item não pode ser excluído (links antigos também não têm).
           management_token: data.management_token || "",
@@ -486,6 +498,14 @@
           link.setAttribute("rel", "noopener noreferrer");
           top.appendChild(link);
 
+          if (item.has_password) {
+            var lock = document.createElement("span");
+            lock.className = "hi-lock";
+            lock.textContent = "🔒";
+            lock.setAttribute("title", "link protegido por senha");
+            top.appendChild(lock);
+          }
+
           var clicks = document.createElement("span");
           clicks.className = "hi-clicks";
           if (item.deleted) { clicks.textContent = "removido"; }
@@ -564,6 +584,8 @@
         var expires = expiresInput.value.trim();
         if (alias) body.custom_alias = alias;
         if (expires) body.expires_in_days = parseInt(expires, 10);
+        var password = passwordInput.value;
+        if (password) body.password = password;
 
         submitBtn.disabled = true;
         submitBtn.textContent = "encurtando...";
@@ -576,7 +598,7 @@
           if (!resp.ok) { showError(resp.status); return null; }
           return resp.json();
         }).then(function (data) {
-          if (data) showResult(data);
+          if (data) { showResult(data); passwordInput.value = ""; }
         }).catch(function () {
           showError(0);
         }).finally(function () {
