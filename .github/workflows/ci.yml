@@ -10,9 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # go-version-file instalaria EXATAMENTE a versão da linha `go` do go.mod
+      # (1.25.0), cuja stdlib acumula CVEs já corrigidos nos patches — o
+      # govulncheck acusa dezenas deles. Pinar a linha 1.25.x com check-latest
+      # garante sempre o último patch.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
 
       - name: gofmt
         run: |
@@ -41,9 +46,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # go-version-file instalaria EXATAMENTE a versão da linha `go` do go.mod
+      # (1.25.0), cuja stdlib acumula CVEs já corrigidos nos patches — o
+      # govulncheck acusa dezenas deles. Pinar a linha 1.25.x com check-latest
+      # garante sempre o último patch.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.x"
+          check-latest: true
 
       # A ação v8 é a que instala a linha v2 do golangci-lint — a v6 resolve
       # "latest" para a v1, que não lê o .golangci.yml (version: "2") e é

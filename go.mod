@@ -2,6 +2,10 @@ module github.com/apolinario0x21/small-links
 
 go 1.25.0
 
+// Patch mínimo do toolchain: a stdlib do 1.25.0 tem CVEs corrigidos até aqui
+// (govulncheck acusa dezenas em quem compila com 1.25.0 cru).
+toolchain go1.25.12
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gin-gonic/gin v1.12.0

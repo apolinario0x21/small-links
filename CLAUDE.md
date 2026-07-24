@@ -242,6 +242,16 @@ migrations/          → SQL versionado, aplicado via go:embed na inicializaçã
   requerido, sem símbolo alcançável). `gosec`: 1 achado (G112, corrigido acima) — hoje limpo.
   `swaggo/swag` foi mantido em v1.16.6 de propósito: a versão da lib precisa casar com a do CLI
   que gerou `docs/`.
+  **Patch do toolchain importa tanto quanto as libs (bug de CI corrigido)**: com
+  `go-version-file: go.mod` o runner instalava **exatamente go1.25.0**, e o govulncheck acusou
+  **29 CVEs da stdlib** — todos já corrigidos até o go1.25.12 (o container `golang:1.25-alpine`
+  usado localmente já vinha patchado, por isso o local passava e o CI não). Correção: `go.mod`
+  ganhou `toolchain go1.25.12` e o CI usa `go-version: 1.25.x` + `check-latest: true`, para o
+  patch mais recente entrar sozinho. **Lição**: fixar a linha `go` não é o mesmo que fixar o
+  toolchain — a stdlib é uma dependência como qualquer outra.
+- **golangci-lint no CI**: usar `golangci/golangci-lint-action@v8` (linha v2 do linter, versão
+  pinada). A `@v6` resolve `latest` para a v1, que não lê o `.golangci.yml` em `version: "2"` e
+  é compilada com Go 1.24 — abaixo do `go.mod`, o que aborta o carregamento da config.
 - **Go 1.25**: exigido pelo `golang.org/x/time`; CI lê a versão do `go.mod`, Dockerfile usa
   `golang:1.25-alpine`.
 - **Observabilidade local (dev)**: `docker-compose.observability.yml` sobe Prometheus (9090) +
