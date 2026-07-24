@@ -68,7 +68,8 @@ func setupTestFull(t *testing.T, swaggerEnabled bool, checker URLChecker) (*gin.
 	}
 	t.Cleanup(func() { mockDB.Close() })
 
-	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, checker, slog.New(slog.NewTextHandler(io.Discard, nil)), swaggerEnabled, "")
+	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, checker,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), Options{SwaggerEnabled: swaggerEnabled})
 
 	return server.Router(), mock
 }
@@ -1240,13 +1241,15 @@ func TestHealthDBFailure(t *testing.T) {
 func TestCORSPreflight(t *testing.T) {
 	router, mock := setupTest(t)
 
-	w := doRequest(router, http.MethodOptions, "/health")
+	w := doRequestWithOrigin(router, http.MethodOptions, "/health", "http://example.com")
 
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
 	}
-	if origin := w.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
-		t.Errorf("Access-Control-Allow-Origin = %q, want %q", origin, "*")
+	// Sem CORS_ALLOWED_ORIGINS, a própria origem da aplicação (o Host da
+	// requisição, "example.com") é a única autorizada.
+	if origin := w.Header().Get("Access-Control-Allow-Origin"); origin != "http://example.com" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q", origin, "http://example.com")
 	}
 	expectations(t, mock)
 }
@@ -1266,7 +1269,7 @@ func clientIPRouter(t *testing.T, trustedPlatform string) *gin.Engine {
 	t.Cleanup(func() { mockDB.Close() })
 
 	server := New(storage.NewPostgres(mockDB), testCipher, noopRecorder{}, nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)), false, trustedPlatform)
+		slog.New(slog.NewTextHandler(io.Discard, nil)), Options{TrustedPlatform: trustedPlatform})
 
 	router := server.Router()
 	router.GET("/client-ip", func(c *gin.Context) {

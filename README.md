@@ -203,6 +203,7 @@ A UI fica ligada por padrão; em produção defina `SWAGGER_ENABLED=false` para 
 | `SAFE_BROWSING_API_KEY` | Não | — | Chave da Google Safe Browsing API. Vazia desabilita a verificação de URL maliciosa. |
 | `GEOIP_DB_PATH` | Não | `/app/dbip-country-lite.mmdb` | Caminho da base MMDB (DB-IP Lite) para geolocalização por país. Ausente/inválida: app roda sem geo. |
 | `TRUSTED_PLATFORM` | Não | — | Fonte do IP do cliente. Vazio: confia só em proxies de faixa privada (Docker Compose local). `cloudflare`: lê `CF-Connecting-IP` — usar **apenas** onde a borda Cloudflare é obrigatória (produção no Render). |
+| `CORS_ALLOWED_ORIGINS` | Não | — | Allowlist de origens cross-origin, separada por vírgula (ex.: `https://app.exemplo.com,https://admin.exemplo.com`). Vazia: só a **própria origem** da aplicação é autorizada. O curinga `*` é ignorado. |
 
 ## 🚀 Rodando localmente
 
@@ -318,6 +319,28 @@ docker compose -f docker-compose.observability.yml up -d
 
 Painéis de latência (p50/p95/p99) só mostram dados **depois** de haver tráfego de redirect —
 gere alguns acessos a short links para populá-los.
+
+## 🛡️ Segurança
+
+- **CORS restritivo**: cross-origin é autorizado apenas para as origens de `CORS_ALLOWED_ORIGINS`
+  (sem a env, somente a própria origem da aplicação). Origem ausente ou fora da lista **não é
+  bloqueada** — apenas não recebe headers CORS, já que quem impõe a restrição é o navegador e
+  bloquear aqui quebraria clientes não-browser legítimos. `Authorization` consta de
+  `Access-Control-Allow-Headers` para as origens permitidas, porque
+  `DELETE /api/links/:shortId` autoriza por Bearer token.
+- **Headers de segurança** em todas as respostas: `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin` e
+  `Content-Security-Policy`. Em modo release soma-se
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+- **CSP com nonce**: a landing embutida usa CSS e JS inline; em vez de liberar `'unsafe-inline'`,
+  cada resposta recebe um nonce novo, carimbado nas tags `<style>`/`<script>`. Só as rotas
+  `/swagger` usam política relaxada (inline de terceiros, desabilitável com
+  `SWAGGER_ENABLED=false`).
+- **Redação de URLs em log**: `internal/logging.RedactURL` substitui por `REDACTED` o valor dos
+  query params `token`, `auth`, `password`, `api_key`, `secret` e `access_token` (case-insensitive)
+  antes de qualquer URL original chegar ao logger.
+- **Ferramentas no CI**: `go test -race`, `golangci-lint`, `govulncheck` e `gosec`. Localmente,
+  `make check` (que inclui `make security-check`) e `make race`.
 
 ## 🔒 Privacidade (LGPD)
 

@@ -24,11 +24,30 @@ type Config struct {
 	SafeBrowsingAPIKey string
 	GeoIPDBPath        string
 	TrustedPlatform    string
+	// CORSAllowedOrigins é a allowlist de origens autorizadas a chamar a API
+	// via browser. Vazia = só a própria origem da aplicação (ver
+	// internal/http.corsMiddleware).
+	CORSAllowedOrigins []string
 }
 
 // PlatformCloudflare habilita a leitura do IP do cliente a partir do header
 // CF-Connecting-IP (ver internal/http.Server.Router).
 const PlatformCloudflare = "cloudflare"
+
+// parseOrigins quebra a lista separada por vírgula, descartando entradas
+// vazias e espaços. O curinga "*" não é aceito: reabrir a API para qualquer
+// origem é justamente o que a allowlist existe para impedir.
+func parseOrigins(raw string) []string {
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		origin := strings.TrimSpace(part)
+		if origin == "" || origin == "*" {
+			continue
+		}
+		origins = append(origins, origin)
+	}
+	return origins
+}
 
 func Load() (Config, error) {
 	cfg := Config{
@@ -47,6 +66,9 @@ func Load() (Config, error) {
 		// quando TODO o tráfego externo passa obrigatoriamente pela borda
 		// Cloudflare (caso do Render) — ver internal/http.Server.Router.
 		TrustedPlatform: strings.ToLower(strings.TrimSpace(os.Getenv("TRUSTED_PLATFORM"))),
+		// Lista separada por vírgula, ex.:
+		// "https://app.exemplo.com,https://admin.exemplo.com".
+		CORSAllowedOrigins: parseOrigins(os.Getenv("CORS_ALLOWED_ORIGINS")),
 	}
 
 	if cfg.GeoIPDBPath == "" {

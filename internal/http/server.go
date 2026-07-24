@@ -18,6 +18,7 @@ import (
 	"github.com/apolinario0x21/small-links/internal/analytics"
 	"github.com/apolinario0x21/small-links/internal/config"
 	"github.com/apolinario0x21/small-links/internal/crypto"
+	"github.com/apolinario0x21/small-links/internal/logging"
 	"github.com/apolinario0x21/small-links/internal/metrics"
 	"github.com/apolinario0x21/small-links/internal/storage"
 	"github.com/gin-gonic/gin"
@@ -42,29 +43,40 @@ type URLChecker interface {
 	Malicious(ctx context.Context, rawURL string) (bool, error)
 }
 
-// Server agrega as dependências dos handlers.
-type Server struct {
-	repo            storage.Repository
-	cipher          *crypto.Cipher
-	recorder        ClickRecorder
-	checker         URLChecker
-	logger          *slog.Logger
-	swaggerEnabled  bool
-	trustedPlatform string
+// Options reúne a configuração do servidor vinda do ambiente, separando-a
+// das dependências injetadas.
+type Options struct {
+	SwaggerEnabled  bool
+	TrustedPlatform string
+	// CORSAllowedOrigins é a allowlist de origens cross-origin; vazia = só a
+	// própria origem da aplicação (ver corsMiddleware).
+	CORSAllowedOrigins []string
+	// ReleaseMode liga headers que só fazem sentido em produção sobre HTTPS
+	// (Strict-Transport-Security).
+	ReleaseMode bool
 }
 
-func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, checker URLChecker, logger *slog.Logger, swaggerEnabled bool, trustedPlatform string) *Server {
+// Server agrega as dependências dos handlers.
+type Server struct {
+	repo     storage.Repository
+	cipher   *crypto.Cipher
+	recorder ClickRecorder
+	checker  URLChecker
+	logger   *slog.Logger
+	opts     Options
+}
+
+func New(repo storage.Repository, cipher *crypto.Cipher, recorder ClickRecorder, checker URLChecker, logger *slog.Logger, opts Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
-		repo:            repo,
-		cipher:          cipher,
-		recorder:        recorder,
-		checker:         checker,
-		logger:          logger,
-		swaggerEnabled:  swaggerEnabled,
-		trustedPlatform: trustedPlatform,
+		repo:     repo,
+		cipher:   cipher,
+		recorder: recorder,
+		checker:  checker,
+		logger:   logger,
+		opts:     opts,
 	}
 }
 
@@ -85,7 +97,7 @@ func (s *Server) Router() *gin.Engine {
 	// Fora dela o header seria trivialmente forjável (spoof de rate limit e de
 	// geo), por isso é opt-in por env e jamais o default. Vazio = modo padrão:
 	// SetTrustedProxies com faixas privadas, que preserva o docker compose local.
-	if s.trustedPlatform == config.PlatformCloudflare {
+	if s.opts.TrustedPlatform == config.PlatformCloudflare {
 		router.TrustedPlatform = gin.PlatformCloudflare
 	} else if err := router.SetTrustedProxies([]string{
 		"127.0.0.1", "::1",
@@ -94,7 +106,11 @@ func (s *Server) Router() *gin.Engine {
 		s.logger.Error("failed to set trusted proxies", "error", err)
 	}
 
-	router.Use(metricsMiddleware(), corsMiddleware())
+	router.Use(
+		metricsMiddleware(),
+		securityHeadersMiddleware(s.opts.ReleaseMode),
+		corsMiddleware(s.opts.CORSAllowedOrigins),
+	)
 
 	createLimiter := newIPRateLimiter(rateLimitPerMinute, rateLimitBurst).middleware()
 
@@ -113,7 +129,7 @@ func (s *Server) Router() *gin.Engine {
 
 	// UI interativa do Swagger/OpenAPI. Registrada antes da rota catch-all
 	// /:shortId e desabilitável via SWAGGER_ENABLED=false (produção).
-	if s.swaggerEnabled {
+	if s.opts.SwaggerEnabled {
 		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	}
 
@@ -136,21 +152,6 @@ func metricsMiddleware() gin.HandlerFunc {
 		metrics.RequestDuration.WithLabelValues(
 			c.Request.Method, route, strconv.Itoa(c.Writer.Status()),
 		).Observe(time.Since(start).Seconds())
-	}
-}
-
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
 	}
 }
 
@@ -303,7 +304,9 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 	if s.checker != nil {
 		switch blocked, err := s.checker.Malicious(c.Request.Context(), originalUrl); {
 		case err != nil:
-			s.logger.Warn("safe browsing check failed, allowing (fail-open)", "error", err)
+			// URL redigida: query params sensíveis (token, secret, ...) nunca
+			// podem chegar ao log.
+			s.logger.Warn("safe browsing check failed, allowing (fail-open)", "url", logging.RedactURL(originalUrl), "error", err)
 			metrics.SafeBrowsingErrorsTotal.Inc()
 		case blocked:
 			metrics.SafeBrowsingBlockedTotal.Inc()
@@ -350,7 +353,7 @@ func (s *Server) createShortURL(c *gin.Context, originalUrl, alias string, expir
 
 	encryptedURL, err := s.cipher.Encrypt(originalUrl)
 	if err != nil {
-		s.logger.Error("failed to encrypt URL", "error", err)
+		s.logger.Error("failed to encrypt URL", "url", logging.RedactURL(originalUrl), "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt URL"})
 		return
 	}
